@@ -11,11 +11,11 @@ Download from [Release](https://github.com/lxl66566/urldecoder/releases).
 Decode all urls in all files in current directory:
 
 ```sh
-urldec
+urldecoder
 ```
 
 more infomation:
 
 ```sh
-urldec -h
+urldecoder -h
 ```
