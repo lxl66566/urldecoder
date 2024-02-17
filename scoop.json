@@ -1,10 +1,10 @@
 {
   "version": "1.0.1",
-  "description": "",
+  "description": "Decode URLs in your files!",
   "homepage": "https://github.com/lxl66566/urldecoder",
   "license": "MIT",
-  "url": "",
-  "hash": "",
+  "url": "https://github.com/lxl66566/urldecoder/releases/download/v1.0.1/urldecoder-x86_64-pc-windows-msvc.zip",
+  "hash": "526cf196cbd0bbbf0c4436157967454f92c4efa809f61535786fc324298c08c0",
   "bin": "urldecoder.exe",
   "checkver": {
     "github": "https://github.com/lxl66566/urldecoder"
