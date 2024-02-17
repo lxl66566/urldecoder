@@ -1,0 +1,15 @@
+{
+  "version": "1.0.1",
+  "description": "",
+  "homepage": "https://github.com/lxl66566/urldecoder",
+  "license": "MIT",
+  "url": "",
+  "hash": "",
+  "bin": "urldecoder.exe",
+  "checkver": {
+    "github": "https://github.com/lxl66566/urldecoder"
+  },
+  "autoupdate": {
+    "url": "https://github.com/lxl66566/urldecoder/releases/download/v$version/urldecoder-x86_64-pc-windows-msvc.zip"
+  }
+}

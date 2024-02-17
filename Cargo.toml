@@ -1,9 +1,10 @@
 [package]
 name = "urldecoder"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["lxl66566 <lxl66566@gmail.com>"]
 description = "Decode URLs in your files!"
+homepage = "https://github.com/lxl66566/urldecoder"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

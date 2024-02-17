@@ -60,8 +60,8 @@ fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
             }
             println!(
                 "{}\n{}",
-                format!("+ {}", line).red(),
-                format!("- {}", decoded_line).green()
+                format!("- {}", line).red(),
+                format!("+ {}", decoded_line).green()
             )
         }
         decoded_content.push_str(&decoded_line);
