@@ -20,7 +20,7 @@ Download binary from [Release](https://github.com/lxl66566/urldecoder/releases).
 In addition to the above methods, you can also install it via [scoop](https://scoop.sh/):
 
 ```sh
-scoop install https://raw.githubusercontent.com/lxl66566/urldecoder/main/scoop.json
+scoop install https://raw.githubusercontent.com/lxl66566/urldecoder/main/urldecoder.json
 ```
 
 ## Usage
