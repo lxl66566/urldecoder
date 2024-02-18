@@ -27,7 +27,7 @@ scoop install https://raw.githubusercontent.com/lxl66566/urldecoder/main/scoop.j
 
 ```sh
 urldecoder test/t.md    # decode test/t.md
-urldecoder *.md         # decode all markdown files in current folder
+urldecoder *.md -e my   # decode all markdown files in current folder except which in `my` folder
 urldecoder *            # decode all files in current folder
 ```
 

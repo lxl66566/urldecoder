@@ -1,8 +1,8 @@
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use colored::Colorize;
 use glob::glob;
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{borrow::Cow, fs, io};
 use urlencoding::decode;
 
@@ -11,7 +11,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, after_help = r#"Examples:
 urldecoder test/t.md    # decode test/t.md
-urldecoder *.md         # decode all markdown files in current folder
+urldecoder *.md -e my   # decode all markdown files in current folder except which in `my` folder
 urldecoder *            # decode all files in current folder
 "#)]
 pub struct Cli {
@@ -23,6 +23,9 @@ pub struct Cli {
     /// Show full error message
     #[arg(short, long)]
     verbose: bool,
+    /// Exclude file or folder
+    #[arg(short, long, action = ArgAction::Append)]
+    exclude: Vec<PathBuf>,
 }
 
 /// Find all urls in the code and decode them.
@@ -45,6 +48,12 @@ fn decode_url_in_code(code: &str) -> (String, bool) {
             .into_owned(),
         replaced,
     )
+}
+fn in_exclude<'a, T>(exclude: T, pattern: &'a Path) -> bool
+where
+    T: IntoIterator<Item = &'a PathBuf>,
+{
+    exclude.into_iter().any(|p| pattern.strip_prefix(p).is_ok())
 }
 
 fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
@@ -75,10 +84,13 @@ fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
 
 fn process_directory(args: &Cli) -> Result<()> {
     for entry in glob(&format!("**/{}", args.file.display()))? {
-        let entry = entry?;
-        if let Err(err) = process_file(&entry, args) {
+        let entry = &entry?;
+        if !entry.is_file() || in_exclude(&args.exclude, entry) {
+            continue;
+        }
+        if let Err(err) = process_file(entry, args) {
             if args.verbose || err.kind() != io::ErrorKind::InvalidData {
-                eprintln!("ERROR: {} : {}", err, &entry.display())
+                eprintln!("ERROR: {} : {}", err, entry.display())
             };
         }
     }
@@ -86,10 +98,10 @@ fn process_directory(args: &Cli) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    let args = Cli::parse();
-    // if let Err(err) = process_directory(&args) {
-    //     eprintln!("Error: {}", err);
-    // }
+    let mut args = Cli::parse();
+    if args.exclude.is_empty() {
+        args.exclude.push("node_modules".into());
+    }
     process_directory(&args)?;
     Ok(())
 }
@@ -115,5 +127,35 @@ mod tests {
             decode_url_in_code(r#""https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94""#),
             (r#""https://www.baidu.com/s?ie=UTF-8&wd=天气""#.into(), true)
         );
+    }
+
+    #[test]
+    fn test_in_exclude() {
+        let pattern = PathBuf::from("path/to/file.txt");
+
+        // Case 1: Empty exclude should always return false
+        let exclude: Vec<PathBuf> = Vec::new();
+        assert!(!in_exclude(&exclude, &pattern));
+
+        // Case 2: Single path in exclude that matches the pattern
+        let exclude: Vec<PathBuf> = vec![PathBuf::from("path/to")];
+        assert!(in_exclude(&exclude, &pattern));
+
+        // Case 3: Single path in exclude that doesn't match the pattern
+        let exclude: Vec<PathBuf> = vec![PathBuf::from("other/path")];
+        assert!(!in_exclude(&exclude, &pattern));
+
+        // Case 4: Multiple paths in exclude, one of them matches the pattern
+        let exclude: Vec<PathBuf> = vec![PathBuf::from("path/to"), PathBuf::from("some/other")];
+        assert!(in_exclude(&exclude, &pattern));
+
+        // Case 5: Multiple paths in exclude, none of them matches the pattern
+        let exclude: Vec<PathBuf> = vec![PathBuf::from("/other/path"), PathBuf::from("some/other")];
+        assert!(!in_exclude(&exclude, &pattern));
+
+        // Case 6: Do not except files that only match prefix
+        let exclude: Vec<PathBuf> = vec![PathBuf::from("fi")];
+        let pattern = PathBuf::from("file.txt");
+        assert!(!in_exclude(&exclude, &pattern));
     }
 }
