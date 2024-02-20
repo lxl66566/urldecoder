@@ -26,11 +26,14 @@ pub struct Cli {
     /// Exclude file or folder
     #[arg(short, long, action = ArgAction::Append)]
     exclude: Vec<PathBuf>,
+    /// Do not decode `%20` to space
+    #[arg(long)]
+    escape_space: bool,
 }
 
 /// Find all urls in the code and decode them.
 /// Returns the String of decoded code and a bool indicates whether the code has decoded urls.
-fn decode_url_in_code(code: &str) -> (String, bool) {
+fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
     let mut replaced = false;
     let regex =
         Regex::new(r#"https?://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]"#).unwrap();
@@ -38,17 +41,21 @@ fn decode_url_in_code(code: &str) -> (String, bool) {
         regex
             .replace_all(code, |caps: &regex::Captures| {
                 let url = &caps[0];
-                let decoded_url = decode(url).unwrap_or(Cow::Borrowed(url));
+                let mut decoded_url = decode(url).unwrap_or(Cow::Borrowed(url)).into_owned();
+                if escape_space {
+                    decoded_url = decoded_url.replace(' ', "%20");
+                }
                 if url == decoded_url {
                     return url.to_string();
                 }
                 replaced = true;
-                decoded_url.into_owned()
+                decoded_url
             })
             .into_owned(),
         replaced,
     )
 }
+
 fn in_exclude<'a, T>(exclude: T, pattern: &'a Path) -> bool
 where
     T: IntoIterator<Item = &'a PathBuf>,
@@ -61,7 +68,7 @@ fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
     let content = fs::read_to_string(file_path)?;
     let mut decoded_content = String::new();
     for line in content.lines() {
-        let (decoded_line, replaced_line) = decode_url_in_code(line);
+        let (decoded_line, replaced_line) = decode_url_in_code(line, args.escape_space);
         if replaced_line {
             if !replaced {
                 println!("In file: {}", file_path.display());
@@ -112,20 +119,43 @@ mod tests {
     #[test]
     fn test_decode_url_in_code() {
         assert_eq!(
-            decode_url_in_code("https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94"),
+            decode_url_in_code(
+                "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94",
+                false
+            ),
             ("https://www.baidu.com/s?ie=UTF-8&wd=天气".into(), true)
         );
         assert_eq!(
-            decode_url_in_code("https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94天气"),
+            decode_url_in_code(
+                "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94天气",
+                false
+            ),
             ("https://www.baidu.com/s?ie=UTF-8&wd=天气天气".into(), true)
         );
         assert_eq!(
-            decode_url_in_code("https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94)("),
+            decode_url_in_code(
+                "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94)(",
+                false
+            ),
             ("https://www.baidu.com/s?ie=UTF-8&wd=天气)(".into(), true)
         );
         assert_eq!(
-            decode_url_in_code(r#""https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94""#),
+            decode_url_in_code(
+                r#""https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94""#,
+                false
+            ),
             (r#""https://www.baidu.com/s?ie=UTF-8&wd=天气""#.into(), true)
+        );
+        // escape space
+        assert_eq!(
+            decode_url_in_code(
+                "https://osu.ppy.sh/beatmapsets?q=malody%204k%20extra%20dan%20v3%E4%B8%AD",
+                true
+            ),
+            (
+                "https://osu.ppy.sh/beatmapsets?q=malody%204k%20extra%20dan%20v3中".into(),
+                true
+            )
         );
     }
 

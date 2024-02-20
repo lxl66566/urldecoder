@@ -1,6 +1,6 @@
 [package]
 name = "urldecoder"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 authors = ["lxl66566 <lxl66566@gmail.com>"]
 description = "Decode URLs in your files!"
