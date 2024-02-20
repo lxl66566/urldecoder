@@ -42,7 +42,7 @@ urldecoder -h
 这是我如何使用它的一个真实例子：
 
 ```sh
-urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space'src/**/*.md'。
+urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space 'src/**/*.md'
 ```
 
-用于在提交前解码我的 vuepress 博客。
+用于在提交前解码我的 vuepress 博客文章内容。
