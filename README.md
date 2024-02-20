@@ -1,8 +1,10 @@
 # urldecoder
 
-A tool to decode URLs in your file. A toy project written in Rust.
+English | [简体中文](./docs/README.zh-CN.md)
 
-for example:
+A tool to decode URLs in your files. A toy project written in Rust.
+
+Decoding URLs shortens the string length and increases readability. Example:
 
 ```
 - https://github.com/lxl66566/my-college-files/tree/main/%E4%BF%A1%E6%81%AF%E7%A7%91%E5%AD%A6%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%AD%A6%E9%99%A2/%E5%B5%8C%E5%85%A5%E5%BC%8F%E7%B3%BB%E7%BB%9F
@@ -36,3 +38,11 @@ more infomation:
 ```sh
 urldecoder -h
 ```
+
+Real example of how I use it:
+
+```sh
+urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space 'src/**/*.md'
+```
+
+to auto decode my vuepress blog before committing.

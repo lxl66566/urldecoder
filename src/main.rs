@@ -43,6 +43,7 @@ fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
                 let url = &caps[0];
                 let mut decoded_url = decode(url).unwrap_or(Cow::Borrowed(url)).into_owned();
                 if escape_space {
+                    // Replacing after decoding will not affect much performance (Benchmarked).
                     decoded_url = decoded_url.replace(' ', "%20");
                 }
                 if url == decoded_url {
