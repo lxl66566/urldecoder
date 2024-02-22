@@ -68,7 +68,7 @@ fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
     let mut replaced = false;
     let content = fs::read_to_string(file_path)?;
     let mut decoded_content = String::new();
-    for line in content.lines() {
+    for (line_number, line) in content.lines().enumerate() {
         let (decoded_line, replaced_line) = decode_url_in_code(line, args.escape_space);
         if replaced_line {
             if !replaced {
@@ -77,8 +77,8 @@ fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
             }
             println!(
                 "{}\n{}",
-                format!("- {}", line).red(),
-                format!("+ {}", decoded_line).green()
+                format!("{} - {}", line_number + 1, line).red(),
+                format!("{} + {}", line_number + 1, decoded_line).green()
             )
         }
         decoded_content.push_str(&decoded_line);
