@@ -116,6 +116,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "die-exit"
+version = "0.4.0"
+source = "git+https://github.com/lxl66566/die.git#a390c21f5a77c0261b819ca991e8ad04e49972c9"
+
+[[package]]
 name = "glob"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -211,11 +216,13 @@ checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
 
 [[package]]
 name = "urldecoder"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "clap",
  "colored",
+ "die-exit",
  "glob",
+ "lazy_static",
  "regex",
  "urlencoding",
 ]

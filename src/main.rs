@@ -1,6 +1,8 @@
 use clap::{ArgAction, Parser};
 use colored::Colorize;
-use glob::glob;
+use die_exit::{Die, DieWith};
+use glob::{glob, Paths};
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, fs, io};
@@ -10,17 +12,18 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, after_help = r#"Examples:
-urldecoder test/t.md    # decode test/t.md
-urldecoder *.md -e my   # decode all markdown files in current folder except which in `my` folder
-urldecoder *            # decode all files in current folder
+urldecoder test/t.md        # decode test/t.md
+urldecoder *.md -e my.md    # decode all markdown files in current folder except `my.md`
+urldecoder **/*             # decode all files recursively in current folder
 "#)]
 pub struct Cli {
-    /// Files to convert. It uses glob("**/{file}") to glob given pattern, like python's `rglob`
-    file: PathBuf,
-    /// Show result only without overwrite
+    /// Files to convert, uses glob("{file}") to parse given pattern
+    #[clap(required = true)]
+    files: Vec<PathBuf>,
+    /// Show result only, without overwrite
     #[arg(short, long)]
     dry_run: bool,
-    /// Show full error message
+    /// Show full debug and error message
     #[arg(short, long)]
     verbose: bool,
     /// Exclude file or folder
@@ -29,6 +32,15 @@ pub struct Cli {
     /// Do not decode `%20` to space
     #[arg(long)]
     escape_space: bool,
+}
+
+lazy_static! {
+    static ref CLI: Cli = {
+        let mut args = Cli::parse();
+        args.exclude.push("node_modules".into());
+        args.exclude.dedup();
+        args
+    };
 }
 
 /// Find all urls in the code and decode them.
@@ -64,12 +76,15 @@ where
     exclude.into_iter().any(|p| pattern.strip_prefix(p).is_ok())
 }
 
-fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
+fn process_file(file_path: &PathBuf) -> io::Result<()> {
+    if CLI.verbose {
+        println!("Processing {} ...", file_path.display());
+    }
     let mut replaced = false;
     let content = fs::read_to_string(file_path)?;
     let mut decoded_content = String::new();
     for (line_number, line) in content.lines().enumerate() {
-        let (decoded_line, replaced_line) = decode_url_in_code(line, args.escape_space);
+        let (decoded_line, replaced_line) = decode_url_in_code(line, CLI.escape_space);
         if replaced_line {
             if !replaced {
                 println!("In file: {}", file_path.display());
@@ -84,33 +99,41 @@ fn process_file(file_path: &PathBuf, args: &Cli) -> io::Result<()> {
         decoded_content.push_str(&decoded_line);
         decoded_content.push('\n');
     }
-    if replaced && !args.dry_run {
+    if replaced && !CLI.dry_run {
         fs::write(file_path, decoded_content)?;
     }
     Ok(())
 }
 
-fn process_directory(args: &Cli) -> Result<()> {
-    for entry in glob(&format!("**/{}", args.file.display()))? {
-        let entry = &entry?;
-        if !entry.is_file() || in_exclude(&args.exclude, entry) {
+fn process_directory() -> Result<()> {
+    let pathss: Vec<Paths> = CLI
+        .files
+        .iter()
+        .map(|p| {
+            glob(
+                p.to_str()
+                    .die(format!("Parsing invalid filename: {}", p.display()).as_str()),
+            )
+            .die_with(|e| e.to_string())
+        })
+        .collect();
+    for entry in pathss.into_iter().flatten() {
+        let entry: &PathBuf = &entry?;
+        if !entry.is_file() || in_exclude(&CLI.exclude, entry) {
             continue;
         }
-        if let Err(err) = process_file(entry, args) {
-            if args.verbose || err.kind() != io::ErrorKind::InvalidData {
+        if let Err(err) = process_file(entry) {
+            if CLI.verbose || err.kind() != io::ErrorKind::InvalidData {
                 eprintln!("ERROR: {} : {}", err, entry.display())
             };
         }
     }
+
     Ok(())
 }
 
 fn main() -> Result<()> {
-    let mut args = Cli::parse();
-    if args.exclude.is_empty() {
-        args.exclude.push("node_modules".into());
-    }
-    process_directory(&args)?;
+    process_directory()?;
     Ok(())
 }
 

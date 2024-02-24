@@ -2,7 +2,7 @@
 
 English | [简体中文](./docs/README.zh-CN.md)
 
-A tool to decode URLs in your files. A toy project written in Rust.
+A tool to batch decode URLs in your files. A toy project written in Rust.
 
 Decoding URLs shortens the string length and increases readability. Example:
 
@@ -28,16 +28,26 @@ scoop install https://raw.githubusercontent.com/lxl66566/urldecoder/main/urldeco
 ## Usage
 
 ```sh
-urldecoder test/t.md    # decode test/t.md
-urldecoder *.md -e my   # decode all markdown files in current folder except which in `my` folder
-urldecoder *            # decode all files in current folder
+Usage: urldecoder [OPTIONS] <FILES>...
+
+Arguments:
+  <FILES>...  Files to convert, uses glob("{file}") to parse given pattern
+
+Options:
+  -d, --dry-run            Show result only, without overwrite
+  -v, --verbose            Show full debug and error message
+  -e, --exclude <EXCLUDE>  Exclude file or folder
+      --escape-space       Do not decode `%20` to space
+  -h, --help               Print help
+  -V, --version            Print version
+
+Examples:
+urldecoder test/t.md        # decode test/t.md
+urldecoder *.md -e my.md    # decode all markdown files in current folder except `my.md`
+urldecoder **/*             # decode all files recursively in current folder
 ```
 
-more infomation:
-
-```sh
-urldecoder -h
-```
+and exclude `node_modules` by default.
 
 Real example of how I use it:
 

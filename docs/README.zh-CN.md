@@ -28,16 +28,26 @@ scoop install https://raw.githubusercontent.com/lxl66566/urldecoder/main/urldeco
 ### 使用方法
 
 ```sh
-urldecoder test/t.md  # 解码 test/t.md
-urldecoder *.md -e my # 解码当前文件夹中的所有 markdown 文件，但 `my` 文件夹中的除外
-urldecoder *          # 解码当前文件夹中的所有文件
+Usage: urldecoder [OPTIONS] <FILES>...
+
+Arguments:
+  <FILES>...  传入文件样式，使用 glob 匹配
+
+Options:
+  -d, --dry-run            仅显示结果，不修改文件
+  -v, --verbose            显示更多错误与详细信息
+  -e, --exclude <EXCLUDE>  排除文件或文件夹
+      --escape-space       不将 `%20` 解码为空格
+  -h, --help               打印帮助
+  -V, --version            打印版本
+
+Examples:
+urldecoder test/t.md        # 解码 test/t.md
+urldecoder *.md -e my.md    # 解码当前文件夹下所有 `.md` 结尾的文件，除了 `my.md`
+urldecoder **/*             # 解码当前文件夹及其子文件夹的所有文件
 ```
 
-更多用法：
-
-```sh
-urldecoder -h
-```
+默认情况下将排除 `node_modules` 文件夹。
 
 这是我如何使用它的一个真实例子：
 
