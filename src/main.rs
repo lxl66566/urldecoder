@@ -1,3 +1,6 @@
+#![feature(test)]
+extern crate test;
+
 use clap::{ArgAction, Parser};
 use colored::Colorize;
 use die_exit::{Die, DieWith};
@@ -43,6 +46,14 @@ lazy_static! {
     };
 }
 
+/// Whether a file in exclude list.
+fn in_exclude<'a, T>(exclude: T, pattern: &'a Path) -> bool
+where
+    T: IntoIterator<Item = &'a PathBuf>,
+{
+    exclude.into_iter().any(|p| pattern.strip_prefix(p).is_ok())
+}
+
 /// Find all urls in the code and decode them.
 /// Returns the String of decoded code and a bool indicates whether the code has decoded urls.
 fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
@@ -67,13 +78,6 @@ fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
             .into_owned(),
         replaced,
     )
-}
-
-fn in_exclude<'a, T>(exclude: T, pattern: &'a Path) -> bool
-where
-    T: IntoIterator<Item = &'a PathBuf>,
-{
-    exclude.into_iter().any(|p| pattern.strip_prefix(p).is_ok())
 }
 
 fn process_file(file_path: &PathBuf) -> io::Result<()> {
@@ -140,6 +144,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test::Bencher;
+
     #[test]
     fn test_decode_url_in_code() {
         assert_eq!(
@@ -211,5 +217,10 @@ mod tests {
         let exclude: Vec<PathBuf> = vec![PathBuf::from("fi")];
         let pattern = PathBuf::from("file.txt");
         assert!(!in_exclude(&exclude, &pattern));
+    }
+
+    #[bench]
+    fn bench_par(b: &mut Bencher) {
+        // b.iter(|| );
     }
 }

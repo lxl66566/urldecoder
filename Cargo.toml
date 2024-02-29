@@ -21,6 +21,8 @@ version = "*"
 git = "https://github.com/lxl66566/die.git"
 features = ["red"]
 
+[dev-dependencies]
+temp_testdir = "0.2.3"
 
 [profile.release]
 strip = true
