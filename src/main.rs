@@ -8,10 +8,11 @@ use glob::{glob, Paths};
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::{Path, PathBuf};
-use std::{borrow::Cow, fs, io};
+use std::{borrow::Cow, io};
+use tokio::fs;
 use urlencoding::decode;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, after_help = r#"Examples:
@@ -54,6 +55,23 @@ where
     exclude.into_iter().any(|p| pattern.strip_prefix(p).is_ok())
 }
 
+/// Search an ASCII char in a sequence, from right.
+/// Because the '%' is more likely to appear on the right.
+trait Rcontains {
+    fn rcontains(&self, c: &u8) -> bool;
+}
+
+impl Rcontains for &str {
+    fn rcontains(&self, c: &u8) -> bool {
+        for i in self.bytes().rev() {
+            if &i == c {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// Find all urls in the code and decode them.
 /// Returns the String of decoded code and a bool indicates whether the code has decoded urls.
 fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
@@ -64,28 +82,33 @@ fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
         regex
             .replace_all(code, |caps: &regex::Captures| {
                 let url = &caps[0];
-                let mut decoded_url = decode(url).unwrap_or(Cow::Borrowed(url)).into_owned();
-                if escape_space {
-                    // Replacing after decoding will not affect much performance (Benchmarked).
-                    decoded_url = decoded_url.replace(' ', "%20");
+                if !url.rcontains(&b'%') {
+                    return url.to_owned();
                 }
-                if url == decoded_url {
-                    return url.to_string();
+                let mut decoded_url = decode(url).unwrap_or(Cow::Borrowed(url));
+                let result = if escape_space {
+                    // Replacing after decoding will not affect much performance (Benchmarked).
+                    decoded_url.to_mut().replace(' ', "%20")
+                } else {
+                    decoded_url.into()
+                };
+                if url == result {
+                    return url.to_owned();
                 }
                 replaced = true;
-                decoded_url
+                result
             })
             .into_owned(),
         replaced,
     )
 }
 
-fn process_file(file_path: &PathBuf) -> io::Result<()> {
+async fn process_file(file_path: &PathBuf) -> io::Result<()> {
     if CLI.verbose {
         println!("Processing {} ...", file_path.display());
     }
     let mut replaced = false;
-    let content = fs::read_to_string(file_path)?;
+    let content = fs::read_to_string(&file_path).await?;
     let mut decoded_content = String::new();
     for (line_number, line) in content.lines().enumerate() {
         let (decoded_line, replaced_line) = decode_url_in_code(line, CLI.escape_space);
@@ -104,12 +127,12 @@ fn process_file(file_path: &PathBuf) -> io::Result<()> {
         decoded_content.push('\n');
     }
     if replaced && !CLI.dry_run {
-        fs::write(file_path, decoded_content)?;
+        fs::write(&file_path, decoded_content).await?;
     }
     Ok(())
 }
 
-fn process_directory() -> Result<()> {
+async fn process_directory() -> Result<()> {
     let pathss: Vec<Paths> = CLI
         .files
         .iter()
@@ -121,23 +144,30 @@ fn process_directory() -> Result<()> {
             .die_with(|e| e.to_string())
         })
         .collect();
+    let mut handles = Vec::new();
     for entry in pathss.into_iter().flatten() {
-        let entry: &PathBuf = &entry?;
-        if !entry.is_file() || in_exclude(&CLI.exclude, entry) {
+        let entry = entry?;
+        if !entry.is_file() || in_exclude(&CLI.exclude, &entry) {
             continue;
         }
-        if let Err(err) = process_file(entry) {
-            if CLI.verbose || err.kind() != io::ErrorKind::InvalidData {
-                eprintln!("ERROR: {} : {}", err, entry.display())
-            };
-        }
+        let handle = tokio::spawn(async move {
+            if let Err(err) = process_file(&entry).await {
+                if CLI.verbose || err.kind() != io::ErrorKind::InvalidData {
+                    eprintln!("ERROR: {} : {}", err, entry.display())
+                };
+            }
+        });
+        handles.push(handle);
     }
-
+    for handle in handles {
+        handle.await?;
+    }
     Ok(())
 }
 
-fn main() -> Result<()> {
-    process_directory()?;
+#[tokio::main]
+async fn main() -> Result<()> {
+    process_directory().await?;
     Ok(())
 }
 
@@ -186,6 +216,11 @@ mod tests {
                 "https://osu.ppy.sh/beatmapsets?q=malody%204k%20extra%20dan%20v3中".into(),
                 true
             )
+        );
+        // nothing happens
+        assert_eq!(
+            decode_url_in_code("https://osu.ppy.sh", true),
+            ("https://osu.ppy.sh".into(), false)
         );
     }
 
