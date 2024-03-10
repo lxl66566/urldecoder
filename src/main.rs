@@ -5,9 +5,9 @@ use clap::{ArgAction, Parser};
 use colored::Colorize;
 use die_exit::{Die, DieWith};
 use glob::{glob, Paths};
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::{borrow::Cow, io};
 use tokio::fs;
 use urlencoding::decode;
@@ -38,14 +38,7 @@ pub struct Cli {
     escape_space: bool,
 }
 
-lazy_static! {
-    static ref CLI: Cli = {
-        let mut args = Cli::parse();
-        args.exclude.push("node_modules".into());
-        args.exclude.dedup();
-        args
-    };
-}
+static CLI: OnceLock<Cli> = OnceLock::new();
 
 /// Whether a file in exclude list.
 fn in_exclude<'a, T>(exclude: T, pattern: &'a Path) -> bool
@@ -104,14 +97,15 @@ fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
 }
 
 async fn process_file(file_path: &PathBuf) -> io::Result<()> {
-    if CLI.verbose {
+    if CLI.get().unwrap().verbose {
         println!("Processing {} ...", file_path.display());
     }
     let mut replaced = false;
     let content = fs::read_to_string(&file_path).await?;
     let mut decoded_content = String::new();
     for (line_number, line) in content.lines().enumerate() {
-        let (decoded_line, replaced_line) = decode_url_in_code(line, CLI.escape_space);
+        let (decoded_line, replaced_line) =
+            decode_url_in_code(line, CLI.get().unwrap().escape_space);
         if replaced_line {
             if !replaced {
                 println!("In file: {}", file_path.display());
@@ -126,7 +120,8 @@ async fn process_file(file_path: &PathBuf) -> io::Result<()> {
         decoded_content.push_str(&decoded_line);
         decoded_content.push('\n');
     }
-    if replaced && !CLI.dry_run {
+    if replaced && !CLI.get().unwrap().dry_run {
+        decoded_content.pop(); // remove the last '\n'.
         fs::write(&file_path, decoded_content).await?;
     }
     Ok(())
@@ -134,6 +129,8 @@ async fn process_file(file_path: &PathBuf) -> io::Result<()> {
 
 async fn process_directory() -> Result<()> {
     let pathss: Vec<Paths> = CLI
+        .get()
+        .unwrap()
         .files
         .iter()
         .map(|p| {
@@ -147,12 +144,12 @@ async fn process_directory() -> Result<()> {
     let mut handles = Vec::new();
     for entry in pathss.into_iter().flatten() {
         let entry = entry?;
-        if !entry.is_file() || in_exclude(&CLI.exclude, &entry) {
+        if !entry.is_file() || in_exclude(&CLI.get().unwrap().exclude, &entry) {
             continue;
         }
         let handle = tokio::spawn(async move {
             if let Err(err) = process_file(&entry).await {
-                if CLI.verbose || err.kind() != io::ErrorKind::InvalidData {
+                if CLI.get().unwrap().verbose || err.kind() != io::ErrorKind::InvalidData {
                     eprintln!("ERROR: {} : {}", err, entry.display())
                 };
             }
@@ -167,6 +164,12 @@ async fn process_directory() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    CLI.get_or_init(|| {
+        let mut args = Cli::parse();
+        args.exclude.push("node_modules".into());
+        args.exclude.dedup();
+        args
+    });
     process_directory().await?;
     Ok(())
 }
@@ -174,6 +177,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temp_testdir::TempDir;
     use test::Bencher;
 
     #[test]
@@ -254,8 +258,59 @@ mod tests {
         assert!(!in_exclude(&exclude, &pattern));
     }
 
+    #[tokio::test]
+    async fn integration_test() {
+        let temp = TempDir::default();
+        let test_path = PathBuf::from(temp.as_ref());
+        let t1 = test_path.join("test1.txt");
+        let mut t2 = test_path.join("test2");
+        fs::create_dir(&t2).await.unwrap();
+        t2 = t2.join("test2.txt");
+        let t3 = test_path.join("exclude.txt");
+        fs::write(
+            &t1,
+            "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94",
+        )
+        .await
+        .unwrap();
+        fs::write(
+            &t2,
+            "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94",
+        )
+        .await
+        .unwrap();
+        fs::write(
+            &t3,
+            "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94",
+        )
+        .await
+        .unwrap();
+        CLI.get_or_init(|| Cli {
+            // all
+            files: vec![test_path.join("**/*")],
+            dry_run: false,
+            verbose: false,
+            exclude: vec![test_path.join("exclude.txt")],
+            escape_space: false,
+        });
+        process_directory().await.unwrap();
+
+        assert_eq!(
+            fs::read_to_string(t1).await.unwrap(),
+            "https://www.baidu.com/s?ie=UTF-8&wd=天气"
+        );
+        assert_eq!(
+            fs::read_to_string(t2).await.unwrap(),
+            "https://www.baidu.com/s?ie=UTF-8&wd=天气"
+        );
+        assert_eq!(
+            fs::read_to_string(t3).await.unwrap(),
+            "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94"
+        );
+    }
+
     #[bench]
     fn bench_par(b: &mut Bencher) {
-        // b.iter(|| );
+        b.iter(|| {});
     }
 }

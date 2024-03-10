@@ -351,7 +351,6 @@ dependencies = [
  "colored",
  "die-exit",
  "glob",
- "lazy_static",
  "regex",
  "temp_testdir",
  "tokio",
