@@ -1,3 +1,5 @@
+#![warn(clippy::cargo)]
+
 use clap::{ArgAction, Parser};
 use colored::Colorize;
 use die_exit::{Die, DieWith};
@@ -34,6 +36,20 @@ pub struct Cli {
     escape_space: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum EndOfLine {
+    LF,
+    CRLF,
+}
+impl EndOfLine {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EndOfLine::LF => "\n",
+            EndOfLine::CRLF => "\r\n",
+        }
+    }
+}
+
 /// Whether a file in exclude list.
 fn in_exclude<'a, T>(exclude: T, pattern: &'a Path) -> bool
 where
@@ -44,18 +60,18 @@ where
 
 /// Detect if the file uses LF or CRLF. Returns the line ending, `\r\n` for CRLF
 /// and `\n` for LF.
-fn detect_lf_crlf(s: &str) -> &'static str {
+fn detect_lf_crlf(s: &str) -> EndOfLine {
     let bytes = s.as_bytes();
     let pos = bytes.iter().rposition(|&b| b == b'\n');
     match pos {
         Some(p) => {
             if p > 0 && bytes[p - 1] == b'\r' {
-                "\r\n"
+                EndOfLine::CRLF
             } else {
-                "\n"
+                EndOfLine::LF
             }
         }
-        None => "\n",
+        None => EndOfLine::LF,
     }
 }
 
@@ -97,12 +113,16 @@ async fn process_file(
     escape_space: bool,
     dry_run: bool,
 ) -> io::Result<()> {
-    if verbose {
-        println!("Processing {} ...", file_path.display());
-    }
     let mut replaced = false;
     let content = fs::read_to_string(&file_path).await?;
     let lf_crlf = detect_lf_crlf(&content);
+    if verbose {
+        println!(
+            "Processing {}, End of line: {:?}",
+            file_path.display(),
+            lf_crlf
+        );
+    }
     let mut decoded_content = String::new();
     for (line_number, line) in content.lines().enumerate() {
         let (decoded_line, replaced_line) = decode_url_in_code(line, escape_space);
@@ -118,10 +138,10 @@ async fn process_file(
             )
         }
         decoded_content.push_str(&decoded_line);
-        decoded_content.push_str(lf_crlf);
+        decoded_content.push_str(lf_crlf.as_str());
     }
     if replaced && !dry_run {
-        for _ in 0..lf_crlf.len() {
+        for _ in 0..lf_crlf.as_str().len() {
             decoded_content.pop(); // remove the last '\n' or '\r\n'.
         }
         fs::write(&file_path, decoded_content).await?;
@@ -190,8 +210,8 @@ mod tests {
 
     #[test]
     fn test_detect_lf_crlf() {
-        assert!(detect_lf_crlf("asd\r\n\rda") == "\r\n");
-        assert!(detect_lf_crlf("asd\n\rda\n") == "\n");
+        assert!(detect_lf_crlf("asd\r\n\rda") == EndOfLine::CRLF);
+        assert!(detect_lf_crlf("asd\n\rda\n") == EndOfLine::LF);
     }
 
     #[test]
