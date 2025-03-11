@@ -2,12 +2,12 @@
 
 use clap::{ArgAction, Parser};
 use colored::Colorize;
-use die_exit::{Die, DieWith};
-use glob::{Paths, glob};
+use glob::glob;
+use rayon::prelude::*;
 use regex::Regex;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io};
-use tokio::fs;
 use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -19,16 +19,16 @@ urldecoder *.md -e my.md    # decode all markdown files in current folder except
 urldecoder **/*             # decode all files recursively in current folder
 "#)]
 pub struct Cli {
-    /// Files to convert, uses glob("{file}") to parse given pattern
+    /// Files to process, allows wildcard pattern
     #[clap(required = true)]
-    files: Vec<PathBuf>,
+    files: Vec<String>,
     /// Show result only, without overwrite
     #[arg(short, long)]
     dry_run: bool,
     /// Show full debug and error message
     #[arg(short, long)]
     verbose: bool,
-    /// Exclude file or folder
+    /// Exclude file or folder. Wildcard pattern is NOT allowed.
     #[arg(short, long, action = ArgAction::Append)]
     exclude: Vec<PathBuf>,
     /// Do not decode `%20` to space
@@ -79,7 +79,7 @@ fn detect_lf_crlf(s: &str) -> EndOfLine {
 /// Find all urls in the code and decode them.
 /// Returns the String of decoded code and a bool indicates whether the code has
 /// decoded urls.
-fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
+pub fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
     let mut replaced = false;
     let regex =
         Regex::new(r#"https?://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]"#).unwrap();
@@ -108,14 +108,14 @@ fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
     )
 }
 
-async fn process_file(
+pub fn process_file(
     file_path: &PathBuf,
     verbose: bool,
     escape_space: bool,
     dry_run: bool,
 ) -> io::Result<()> {
     let mut replaced = false;
-    let content = fs::read_to_string(&file_path).await?;
+    let content = fs::read_to_string(file_path)?;
     let lf_crlf = detect_lf_crlf(&content);
     if verbose {
         println!(
@@ -145,51 +145,40 @@ async fn process_file(
         for _ in 0..lf_crlf.as_str().len() {
             decoded_content.pop(); // remove the last '\n' or '\r\n'.
         }
-        fs::write(&file_path, decoded_content).await?;
+        fs::write(file_path, decoded_content)?;
     }
     Ok(())
 }
 
-async fn process_directory(
-    files: Vec<PathBuf>,
+pub fn process_directory(
+    files: Vec<String>,
     exclude: Vec<PathBuf>,
     verbose: bool,
     escape_space: bool,
     dry_run: bool,
 ) -> Result<()> {
-    let pathss: Vec<Paths> = files
+    let paths: std::result::Result<Vec<PathBuf>, glob::GlobError> = files
         .iter()
-        .map(|p| {
-            glob(
-                p.to_str()
-                    .die(format!("Parsing invalid filename: {}", p.display()).as_str()),
-            )
-            .die_with(|e| e.to_string())
-        })
+        .flat_map(|p| glob(p).expect("Glob failed"))
         .collect();
-    let mut handles = Vec::new();
-    for entry in pathss.into_iter().flatten() {
-        let entry = entry?;
-        if !entry.is_file() || in_exclude(&exclude, &entry) {
-            continue;
+
+    paths?.into_par_iter().try_for_each(|p| {
+        if !p.is_file() || in_exclude(&exclude, &p) {
+            return Ok(());
         }
-        let handle = tokio::spawn(async move {
-            if let Err(err) = process_file(&entry, verbose, escape_space, dry_run).await {
-                if verbose || err.kind() != io::ErrorKind::InvalidData {
-                    eprintln!("ERROR: {} : {}", err, entry.display())
-                };
+        if let Err(err) = process_file(&p, verbose, escape_space, dry_run) {
+            if verbose || err.kind() != io::ErrorKind::InvalidData {
+                eprintln!("ERROR: {} : {}", err, p.display());
+                return Ok(());
+            } else {
+                return Err(err.into());
             }
-        });
-        handles.push(handle);
-    }
-    for handle in handles {
-        handle.await?;
-    }
-    Ok(())
+        }
+        Ok(())
+    })
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let mut cli = Cli::parse();
     cli.exclude.push("node_modules".into());
     cli.exclude.dedup();
@@ -199,15 +188,14 @@ async fn main() -> Result<()> {
         cli.verbose,
         cli.escape_space,
         cli.dry_run,
-    )
-    .await?;
+    )?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temp_testdir::TempDir;
+    use tempfile::TempDir;
 
     #[test]
     fn test_detect_lf_crlf() {
@@ -293,49 +281,48 @@ mod tests {
         assert!(!in_exclude(&exclude, &pattern));
     }
 
-    #[tokio::test]
-    async fn exclude_and_recursive_test() {
+    #[test]
+    fn exclude_and_recursive_test() {
         let test_str = "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94";
-        let temp = TempDir::default();
+        let temp = TempDir::new().unwrap();
         let test_path = PathBuf::from(temp.as_ref());
         let t1 = test_path.join("test1.txt");
         let mut t2 = test_path.join("test2");
-        fs::create_dir(&t2).await.unwrap();
+        fs::create_dir(&t2).unwrap();
         t2 = t2.join("test2.txt");
         let t3 = test_path.join("exclude.txt");
-        fs::write(&t1, test_str).await.unwrap();
-        fs::write(&t2, test_str).await.unwrap();
-        fs::write(&t3, test_str).await.unwrap();
+        fs::write(&t1, test_str).unwrap();
+        fs::write(&t2, test_str).unwrap();
+        fs::write(&t3, test_str).unwrap();
 
         process_directory(
-            vec![test_path.join("**/*")],
+            vec![test_path.join("**/*").to_string_lossy().to_string()],
             vec![test_path.join("exclude.txt")],
             false,
             false,
             false,
         )
-        .await
         .unwrap();
 
         assert_eq!(
-            fs::read_to_string(t1).await.unwrap(),
+            fs::read_to_string(t1).unwrap(),
             decode(test_str).unwrap().clone()
         );
         assert_eq!(
-            fs::read_to_string(t2).await.unwrap(),
+            fs::read_to_string(t2).unwrap(),
             decode(test_str).unwrap().clone()
         );
-        assert_eq!(fs::read_to_string(t3).await.unwrap(), test_str);
+        assert_eq!(fs::read_to_string(t3).unwrap(), test_str);
     }
 
     /// Returns the expected decode result.
-    async fn write_test_file(path: &Path, delimiter: &str) -> String {
+    fn write_test_file(path: &Path, delimiter: &str) -> String {
         let content = [
             "http://test.com/?q=天气",
             "testhttp://test.com/?q=%E5%A4%A9%E6%B0%94test",
         ];
         let content = content.join(delimiter);
-        fs::write(path, content).await.unwrap();
+        fs::write(path, content).unwrap();
         [
             "http://test.com/?q=天气",
             delimiter,
@@ -344,21 +331,25 @@ mod tests {
         .concat()
     }
 
-    #[tokio::test]
-    async fn test_lf_crlf() {
-        let temp_dir = TempDir::default();
-        let crlf = temp_dir.join("crlf.txt");
-        let crlf_expect = write_test_file(crlf.as_path(), "\r\n").await;
+    #[test]
+    fn test_lf_crlf() {
+        let temp_dir = TempDir::new().unwrap();
+        let temp_dir_path = temp_dir.path();
+        let crlf = temp_dir_path.join("crlf.txt");
+        let crlf_expect = write_test_file(crlf.as_path(), "\r\n");
 
-        let lf = temp_dir.join("lf.txt");
-        let lf_expect = write_test_file(lf.as_path(), "\n").await;
+        let lf = temp_dir_path.join("lf.txt");
+        let lf_expect = write_test_file(lf.as_path(), "\n");
 
-        process_directory(vec![temp_dir.join("**/*")], vec![], false, false, false)
-            .await
-            .unwrap();
-        assert_eq!(fs::read_to_string(crlf).await.unwrap(), crlf_expect);
-        assert_eq!(fs::read_to_string(lf).await.unwrap(), lf_expect);
-
-        drop(temp_dir);
+        process_directory(
+            vec![temp_dir_path.join("**/*").to_string_lossy().to_string()],
+            vec![],
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(crlf).unwrap(), crlf_expect);
+        assert_eq!(fs::read_to_string(lf).unwrap(), lf_expect);
     }
 }
