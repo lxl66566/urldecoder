@@ -3,7 +3,7 @@
 use clap::{ArgAction, Parser};
 use colored::Colorize;
 use die_exit::{Die, DieWith};
-use glob::{glob, Paths};
+use glob::{Paths, glob};
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, io};
@@ -37,6 +37,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
 enum EndOfLine {
     LF,
     CRLF,
