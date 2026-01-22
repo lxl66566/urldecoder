@@ -2,7 +2,7 @@
 
 English | [简体中文](./docs/README.zh-CN.md)
 
-A tool to batch decode URLs in your files. A toy project written in Rust.
+A _blazing fast_ url decoder, can be both used as a CLI tool or a library.
 
 Decoding URLs shortens the string length and increases readability. Example:
 
@@ -11,21 +11,9 @@ Decoding URLs shortens the string length and increases readability. Example:
 + https://github.com/lxl66566/my-college-files/tree/main/信息科学与工程学院/嵌入式系统
 ```
 
-## Install
-
-### All platforms
-
-Download binary from [Release](https://github.com/lxl66566/urldecoder/releases).
-
-### Windows
-
-In addition to the above methods, you can also install it via [scoop](https://scoop.sh/):
-
-```sh
-scoop install https://raw.githubusercontent.com/lxl66566/urldecoder/main/urldecoder.json
-```
-
 ## Usage
+
+### as a CLI tool
 
 ```sh
 Usage: urldecoder [OPTIONS] <FILES>...

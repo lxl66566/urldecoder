@@ -1,255 +1,118 @@
-#![warn(clippy::cargo)]
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use clap::{ArgAction, Parser};
 use colored::Colorize;
 use glob::glob;
 use rayon::prelude::*;
-use regex::Regex;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::{borrow::Cow, io};
-use urlencoding::decode;
+use snafu::ResultExt;
+use urldecoder::decode_file;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
-#[derive(Parser, Default)]
-#[command(author, version, about, long_about = None, after_help = r#"Examples:
-urldecoder test/t.md        # decode test/t.md
-urldecoder *.md -e my.md    # decode all markdown files in current folder except `my.md`
-urldecoder **/*             # decode all files recursively in current folder
-"#)]
-pub struct Cli {
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
     /// Files to process, allows wildcard pattern
     #[clap(required = true)]
     files: Vec<String>,
+
     /// Show result only, without overwrite
     #[arg(short, long)]
     dry_run: bool,
-    /// Show full debug and error message
+
+    /// Show processed files
     #[arg(short, long)]
     verbose: bool,
-    /// Exclude file or folder. Wildcard pattern is NOT allowed.
+
+    /// Exclude file or folder
     #[arg(short, long, action = ArgAction::Append)]
     exclude: Vec<PathBuf>,
+
     /// Do not decode `%20` to space
     #[arg(long)]
     escape_space: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-#[allow(clippy::upper_case_acronyms)]
-enum EndOfLine {
-    LF,
-    CRLF,
-}
-impl EndOfLine {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            EndOfLine::LF => "\n",
-            EndOfLine::CRLF => "\r\n",
-        }
-    }
+#[inline]
+fn in_exclude(exclude: &[PathBuf], path: &Path) -> bool {
+    exclude.iter().any(|p| path.starts_with(p) || path == p)
 }
 
-/// Whether a file in exclude list.
-fn in_exclude<'a, T>(exclude: T, pattern: &'a Path) -> bool
-where
-    T: IntoIterator<Item = &'a PathBuf>,
-{
-    exclude.into_iter().any(|p| pattern.strip_prefix(p).is_ok())
-}
-
-/// Detect if the file uses LF or CRLF. Returns the line ending, `\r\n` for CRLF
-/// and `\n` for LF.
-fn detect_lf_crlf(s: &str) -> EndOfLine {
-    let bytes = s.as_bytes();
-    let pos = bytes.iter().rposition(|&b| b == b'\n');
-    match pos {
-        Some(p) => {
-            if p > 0 && bytes[p - 1] == b'\r' {
-                EndOfLine::CRLF
-            } else {
-                EndOfLine::LF
-            }
-        }
-        None => EndOfLine::LF,
-    }
-}
-
-/// Find all urls in the code and decode them.
-/// Returns the String of decoded code and a bool indicates whether the code has
-/// decoded urls.
-pub fn decode_url_in_code(code: &str, escape_space: bool) -> (String, bool) {
-    let mut replaced = false;
-    let regex =
-        Regex::new(r#"https?://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]"#).unwrap();
-    (
-        regex
-            .replace_all(code, |caps: &regex::Captures| {
-                let url = &caps[0];
-                if url.rfind('%').is_none() {
-                    return url.to_owned();
-                }
-                let mut decoded_url = decode(url).unwrap_or(Cow::Borrowed(url));
-                let result = if escape_space {
-                    // Replacing after decoding will not affect much performance (Benchmarked).
-                    decoded_url.to_mut().replace(' ', "%20")
-                } else {
-                    decoded_url.into()
-                };
-                if url == result {
-                    return url.to_owned();
-                }
-                replaced = true;
-                result
-            })
-            .into_owned(),
-        replaced,
-    )
-}
-
-pub fn process_file(
-    file_path: &PathBuf,
-    verbose: bool,
-    escape_space: bool,
-    dry_run: bool,
-) -> io::Result<()> {
-    let mut replaced = false;
-    let content = fs::read_to_string(file_path)?;
-    let lf_crlf = detect_lf_crlf(&content);
-    if verbose {
-        println!(
-            "Processing {}, End of line: {:?}",
-            file_path.display(),
-            lf_crlf
-        );
-    }
-    let mut decoded_content = String::new();
-    for (line_number, line) in content.lines().enumerate() {
-        let (decoded_line, replaced_line) = decode_url_in_code(line, escape_space);
-        if replaced_line {
-            if !replaced {
-                println!("In file: {}", file_path.display());
-                replaced = true;
-            }
-            println!(
-                "{}\n{}",
-                format!("{} - {}", line_number + 1, line).red(),
-                format!("{} + {}", line_number + 1, decoded_line).green()
-            )
-        }
-        decoded_content.push_str(&decoded_line);
-        decoded_content.push_str(lf_crlf.as_str());
-    }
-    if replaced && !dry_run {
-        for _ in 0..lf_crlf.as_str().len() {
-            decoded_content.pop(); // remove the last '\n' or '\r\n'.
-        }
-        fs::write(file_path, decoded_content)?;
-    }
-    Ok(())
-}
-
-pub fn process_directory(
-    files: Vec<String>,
-    exclude: Vec<PathBuf>,
-    verbose: bool,
-    escape_space: bool,
-    dry_run: bool,
-) -> Result<()> {
-    let paths: std::result::Result<Vec<PathBuf>, glob::GlobError> = files
-        .iter()
-        .flat_map(|p| glob(p).expect("Glob failed"))
-        .collect();
-
-    paths?.into_par_iter().try_for_each(|p| {
-        if !p.is_file() || in_exclude(&exclude, &p) {
-            return Ok(());
-        }
-        if let Err(err) = process_file(&p, verbose, escape_space, dry_run) {
-            if verbose || err.kind() != io::ErrorKind::InvalidData {
-                eprintln!("ERROR: {} : {}", err, p.display());
-                return Ok(());
-            } else {
-                return Err(err.into());
-            }
-        }
-        Ok(())
-    })
-}
-
-fn main() -> Result<()> {
+fn main() -> Result<(), snafu::Whatever> {
     let mut cli = Cli::parse();
+
     cli.exclude.push("node_modules".into());
-    cli.exclude.dedup();
+
     process_directory(
         cli.files,
-        cli.exclude,
-        cli.verbose,
+        &cli.exclude,
         cli.escape_space,
+        cli.verbose,
         cli.dry_run,
     )?;
+
     Ok(())
 }
 
-#[cfg(test)]
+fn process_directory(
+    files: Vec<String>,
+    exclude: &[PathBuf],
+    escape_space: bool,
+    verbose: bool,
+    dry_run: bool,
+) -> Result<(), snafu::Whatever> {
+    let mut paths = Vec::new();
+    for pattern in &files {
+        for path in
+            (glob(pattern).with_whatever_context(|e| format!("Glob pattern error: {e}"))?).flatten()
+        {
+            if path.is_file() && !in_exclude(exclude, &path) {
+                paths.push(path);
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        println!("No files found.");
+        return Ok(());
+    }
+
+    let processed_count = AtomicUsize::new(0);
+    let changed_count = AtomicUsize::new(0);
+
+    paths.par_iter().for_each(|path| {
+        if let Err(e) = decode_file(
+            path,
+            escape_space,
+            verbose,
+            dry_run,
+            &processed_count,
+            &changed_count,
+        ) {
+            #[cfg(not(feature = "color"))]
+            eprintln!("{} {}: {}", "ERROR", path.display(), e);
+            #[cfg(feature = "color")]
+            eprintln!("{} {}: {}", "ERROR".red().bold(), path.display(), e);
+        }
+    });
+
+    println!(
+        "Processed {} files, {} files changed.",
+        processed_count.load(Ordering::Relaxed),
+        changed_count.load(Ordering::Relaxed)
+    );
+    Ok(())
+}
+
+#[cfg(all(test, feature = "bin"))]
 mod tests {
-    use super::*;
+    use std::fs;
+
     use tempfile::TempDir;
+    use urldecoder::decode_str;
 
-    #[test]
-    fn test_detect_lf_crlf() {
-        assert!(detect_lf_crlf("asd\r\n\rda") == EndOfLine::CRLF);
-        assert!(detect_lf_crlf("asd\n\rda\n") == EndOfLine::LF);
-    }
-
-    #[test]
-    fn test_decode_url_in_code() {
-        assert_eq!(
-            decode_url_in_code(
-                "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94",
-                false
-            ),
-            ("https://www.baidu.com/s?ie=UTF-8&wd=天气".into(), true)
-        );
-        assert_eq!(
-            decode_url_in_code(
-                "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94天气",
-                false
-            ),
-            ("https://www.baidu.com/s?ie=UTF-8&wd=天气天气".into(), true)
-        );
-        assert_eq!(
-            decode_url_in_code(
-                "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94)(",
-                false
-            ),
-            ("https://www.baidu.com/s?ie=UTF-8&wd=天气)(".into(), true)
-        );
-        assert_eq!(
-            decode_url_in_code(
-                r#""https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94""#,
-                false
-            ),
-            (r#""https://www.baidu.com/s?ie=UTF-8&wd=天气""#.into(), true)
-        );
-        // escape space
-        assert_eq!(
-            decode_url_in_code(
-                "https://osu.ppy.sh/beatmapsets?q=malody%204k%20extra%20dan%20v3%E4%B8%AD",
-                true
-            ),
-            (
-                "https://osu.ppy.sh/beatmapsets?q=malody%204k%20extra%20dan%20v3中".into(),
-                true
-            )
-        );
-        // nothing happens
-        assert_eq!(
-            decode_url_in_code("https://osu.ppy.sh", true),
-            ("https://osu.ppy.sh".into(), false)
-        );
-    }
+    use super::*;
 
     #[test]
     fn test_in_exclude() {
@@ -297,7 +160,7 @@ mod tests {
 
         process_directory(
             vec![test_path.join("**/*").to_string_lossy().to_string()],
-            vec![test_path.join("exclude.txt")],
+            &[test_path.join("exclude.txt")],
             false,
             false,
             false,
@@ -306,50 +169,12 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(t1).unwrap(),
-            decode(test_str).unwrap().clone()
+            decode_str(test_str, false, false).unwrap().0
         );
         assert_eq!(
             fs::read_to_string(t2).unwrap(),
-            decode(test_str).unwrap().clone()
+            decode_str(test_str, false, false).unwrap().0
         );
         assert_eq!(fs::read_to_string(t3).unwrap(), test_str);
-    }
-
-    /// Returns the expected decode result.
-    fn write_test_file(path: &Path, delimiter: &str) -> String {
-        let content = [
-            "http://test.com/?q=天气",
-            "testhttp://test.com/?q=%E5%A4%A9%E6%B0%94test",
-        ];
-        let content = content.join(delimiter);
-        fs::write(path, content).unwrap();
-        [
-            "http://test.com/?q=天气",
-            delimiter,
-            "testhttp://test.com/?q=天气test",
-        ]
-        .concat()
-    }
-
-    #[test]
-    fn test_lf_crlf() {
-        let temp_dir = TempDir::new().unwrap();
-        let temp_dir_path = temp_dir.path();
-        let crlf = temp_dir_path.join("crlf.txt");
-        let crlf_expect = write_test_file(crlf.as_path(), "\r\n");
-
-        let lf = temp_dir_path.join("lf.txt");
-        let lf_expect = write_test_file(lf.as_path(), "\n");
-
-        process_directory(
-            vec![temp_dir_path.join("**/*").to_string_lossy().to_string()],
-            vec![],
-            false,
-            false,
-            false,
-        )
-        .unwrap();
-        assert_eq!(fs::read_to_string(crlf).unwrap(), crlf_expect);
-        assert_eq!(fs::read_to_string(lf).unwrap(), lf_expect);
     }
 }

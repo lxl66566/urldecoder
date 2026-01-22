@@ -1,32 +1,52 @@
 [package]
-name = "urldecoder"
-version = "1.4.0"
-edition = "2024"
-authors = ["lxl66566 <lxl66566@gmail.com>"]
-description = "A fast, feature-rich, file-oriented batch URL decoder written in Rust."
-homepage = "https://github.com/lxl66566/urldecoder"
-repository = "https://github.com/lxl66566/urldecoder"
+authors       = ["lxl66566 <lxl66566@gmail.com>"]
+categories    = ["command-line-utilities", "development-tools"]
+description   = "A fast, feature-rich, file-oriented batch URL decoder written in Rust."
 documentation = "https://github.com/lxl66566/urldecoder"
-license = "MIT"
-keywords = ["url", "decode"]
-readme = "README.md"
-categories = ["command-line-utilities"]
+edition       = "2024"
+homepage      = "https://github.com/lxl66566/urldecoder"
+keywords      = ["url", "decode"]
+license       = "MIT"
+name          = "urldecoder"
+readme        = "README.md"
+repository    = "https://github.com/lxl66566/urldecoder"
+version       = "2.0.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.5.32", features = ["derive"] }
-colored = "3.0.0"
-glob = "0.3.2"
-regex = "1.11.1"
-urlencoding = "2.1.3"
-rayon = "1.10.0"
-
-[dev-dependencies]
+clap     = { version = "4.5.32", features = ["derive"] }
+colored  = { version = "3.0.0", optional = true }
+glob     = { version = "0.3.2", optional = true }
+memchr   = "2.7.6"
+rayon    = { version = "1.10.0", optional = true }
+snafu    = "0.8.9"
 tempfile = "3.8"
 
+[dev-dependencies]
+criterion = "0.8.1"
+
+[features]
+bin         = ["rayon", "glob"]
+color       = ["colored"]
+default     = ["verbose-log", "color"]
+verbose-log = []
+
 [profile.release]
-strip = true
-lto = true
-panic = "abort"
+lto       = true
 opt-level = "z"
+panic     = "abort"
+strip     = true
+
+[lib]
+name = "urldecoder"
+path = "src/lib.rs"
+
+[[bin]]
+name              = "urldecoder"
+path              = "src/main.rs"
+required-features = ["bin"]
+
+[[bench]]
+harness = false
+name    = "single_thread"

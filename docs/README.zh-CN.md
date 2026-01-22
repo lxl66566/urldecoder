@@ -2,7 +2,7 @@
 
 [English](../README.md) | 简体中文
 
-批量解码文件中的 URL，一个用 Rust 写的~~玩具~~项目。
+解码 url，可以用作 lib，或者 cli 工具批量解码。blazing fast。
 
 解码可以缩短字符串长度，增加可读性。例如：
 
@@ -11,21 +11,9 @@
 + https://github.com/lxl66566/my-college-files/tree/main/信息科学与工程学院/嵌入式系统
 ```
 
-## 安装
+## 使用方法
 
-### 所有平台
-
-从 [Release](https://github.com/lxl66566/urldecoder/releases) 下载二进制文件。
-
-### Windows
-
-除上述方法外，在 windows 上还可通过 [scoop](https://scoop.sh/) 安装：
-
-```sh
-scoop install https://raw.githubusercontent.com/lxl66566/urldecoder/main/urldecoder.json
-```
-
-### 使用方法
+### 命令行
 
 ```sh
 Usage: urldecoder [OPTIONS] <FILES>...
@@ -55,4 +43,6 @@ urldecoder **/*             # 解码当前文件夹及其子文件夹的所有�
 urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space 'src/**/*.md'
 ```
 
-用于在提交前解码我的 vuepress 博客文章内容。
+### rust 库
+
+前往 [docs.rs](https://docs.rs/urldecoder) 查看文档。
