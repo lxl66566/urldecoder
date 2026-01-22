@@ -2,45 +2,79 @@
 
 English | [简体中文](./docs/README.zh-CN.md)
 
-A _blazing fast_ url decoder, can be both used as a CLI tool or a library.
+A high-performance CLI tool and Rust library for batch URL decoding.
 
-Decoding URLs shortens the string length and increases readability. Example:
+Decoding shortens string length and improves readability. For example:
 
-```
+```diff
 - https://github.com/lxl66566/my-college-files/tree/main/%E4%BF%A1%E6%81%AF%E7%A7%91%E5%AD%A6%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%AD%A6%E9%99%A2/%E5%B5%8C%E5%85%A5%E5%BC%8F%E7%B3%BB%E7%BB%9F
 + https://github.com/lxl66566/my-college-files/tree/main/信息科学与工程学院/嵌入式系统
 ```
 
 ## Usage
 
-### as a CLI tool
+### CLI
 
 ```sh
 Usage: urldecoder [OPTIONS] <FILES>...
 
 Arguments:
-  <FILES>...  Files to convert, uses glob("{file}") to parse given pattern
+  <FILES>...  Input file patterns (supports glob)
 
 Options:
-  -d, --dry-run            Show result only, without overwrite
-  -v, --verbose            Show full debug and error message
-  -e, --exclude <EXCLUDE>  Exclude file or folder
-      --escape-space       Do not decode `%20` to space
+  -d, --dry-run            Test run only; do not modify files
+  -v, --verbose            Show verbose errors and details
+  -e, --exclude <EXCLUDE>  Exclude files or folders (prefix match)
+      --escape-space       Do not decode `%20` to spaces
   -h, --help               Print help
   -V, --version            Print version
 
 Examples:
-urldecoder test/t.md        # decode test/t.md
-urldecoder *.md -e my.md    # decode all markdown files in current folder except `my.md`
-urldecoder **/*             # decode all files recursively in current folder
+urldecoder test/t.md        # Decode test/t.md
+urldecoder *.md -e my.md    # Decode all .md files, excluding my.md
+urldecoder **/*             # Decode all files recursively
 ```
 
-and exclude `node_modules` by default.
+The `node_modules` folder is excluded by default.
 
-Real example of how I use it:
+A real-world usage example:
 
 ```sh
 urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space 'src/**/*.md'
 ```
 
-to auto decode my vuepress blog before committing.
+### Rust Library
+
+Visit [docs.rs](https://docs.rs/urldecoder) for documentation.
+
+Features:
+
+- `bin`: For CLI compilation; enables rayon parallel decoding + glob matching.
+- `verbose-log` (default): Enables logging during decoding.
+- `color`: Enables colored log output.
+
+Limits:
+
+- Maximum size for a single URL is 64KB.
+
+## Benchmark
+
+Environment: Ryzen 7950x, NixOS
+Content: 90% ASCII text + 10% URL strings
+
+### Single Thread
+
+Pure in-memory URL decoding test.
+
+`cargo bench --bench single_thread --no-default-features`
+
+Result: **3.2944 GiB/s**
+
+### Parallel File Decoding
+
+Multi-threaded file decoding test on tmpfs.
+
+`cargo bench --bench multi_files --no-default-features -F bin`
+
+- 900KB files: **26.370 GiB/s**
+- 10MB files: **33.432 GiB/s**

@@ -10,17 +10,18 @@ license       = "MIT"
 name          = "urldecoder"
 readme        = "README.md"
 repository    = "https://github.com/lxl66566/urldecoder"
+rust-version  = "1.85.1"
 version       = "2.0.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap     = { version = "4.5.32", features = ["derive"] }
-colored  = { version = "3.0.0", optional = true }
-glob     = { version = "0.3.2", optional = true }
-memchr   = "2.7.6"
-rayon    = { version = "1.10.0", optional = true }
-snafu    = "0.8.9"
+clap     = { version = "4.5", features = ["derive"] }
+colored  = { version = "3", optional = true }
+glob     = { version = "0.3", optional = true }
+memchr   = "2"
+rayon    = { version = "1", optional = true }
+snafu    = "0.8"
 tempfile = "3.8"
 
 [dev-dependencies]
@@ -29,7 +30,7 @@ criterion = "0.8.1"
 [features]
 bin         = ["rayon", "glob"]
 color       = ["colored"]
-default     = ["verbose-log", "color"]
+default     = ["verbose-log"]
 verbose-log = []
 
 [profile.release]
@@ -50,3 +51,8 @@ required-features = ["bin"]
 [[bench]]
 harness = false
 name    = "single_thread"
+
+[[bench]]
+features = ["bin"]
+harness  = false
+name     = "multi_files"

@@ -4,6 +4,7 @@ use std::{
 };
 
 use clap::{ArgAction, Parser};
+#[cfg(feature = "color")]
 use colored::Colorize;
 use glob::glob;
 use rayon::prelude::*;

@@ -62,8 +62,6 @@ fn generate_mixed_data() -> Vec<u8> {
         }
     }
     pattern.push_str(url);
-    assert_eq!(pattern.len(), total_len);
-    assert_eq!(pattern[text_len..].len(), url_len);
     pattern.into_bytes()
 }
 

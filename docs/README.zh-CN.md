@@ -2,11 +2,11 @@
 
 [English](../README.md) | 简体中文
 
-解码 url，可以用作 lib，或者 cli 工具批量解码。blazing fast。
+cli 工具，批量解码 URL，也可以作为 rust lib 使用。非常快。
 
 解码可以缩短字符串长度，增加可读性。例如：
 
-```
+```diff
 - https://github.com/lxl66566/my-college-files/tree/main/%E4%BF%A1%E6%81%AF%E7%A7%91%E5%AD%A6%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%AD%A6%E9%99%A2/%E5%B5%8C%E5%85%A5%E5%BC%8F%E7%B3%BB%E7%BB%9F
 + https://github.com/lxl66566/my-college-files/tree/main/信息科学与工程学院/嵌入式系统
 ```
@@ -22,9 +22,9 @@ Arguments:
   <FILES>...  传入文件样式，使用 glob 匹配
 
 Options:
-  -d, --dry-run            仅显示结果，不修改文件
+  -d, --dry-run            仅测试运行结果，不修改文件
   -v, --verbose            显示更多错误与详细信息
-  -e, --exclude <EXCLUDE>  排除文件或文件夹
+  -e, --exclude <EXCLUDE>  排除文件或文件夹，前缀匹配
       --escape-space       不将 `%20` 解码为空格
   -h, --help               打印帮助
   -V, --version            打印版本
@@ -46,3 +46,36 @@ urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist 
 ### rust 库
 
 前往 [docs.rs](https://docs.rs/urldecoder) 查看文档。
+
+features:
+
+- `bin`: 用于编译命令行，rayon 并行解码 + glob 文件匹配
+- `verbose-log` (default): 启用解码过程中的日志输出
+- `color`: 启用带有颜色的日志输出
+
+其他：
+
+- 单条 URL 不能超过 64KB。
+
+## benchmark
+
+测试环境：Ryzen 7950x, NixOS
+
+字符串/文本内容：90% 的 ASCII 普通文本 + 10% 的 URL 字符串
+
+### 单线程
+
+进行纯内存的 url 解码测试。
+
+`cargo bench --bench single_thread --no-default-features`
+
+Result: **3.2944 GiB/s**
+
+### 并行解码文件
+
+在 tmpfs 上进行多线程文件解码测试。
+
+`cargo bench --bench multi_files --no-default-features -F bin`
+
+- 900KB 文件：**26.370 GiB/s**
+- 10MB 文件：**33.432 GiB/s**

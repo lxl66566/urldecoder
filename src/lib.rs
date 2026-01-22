@@ -321,7 +321,7 @@ where
         loop {
             let n = reader.read(&mut buf[len..]).context(ReadInputSnafu)?;
             if n == 0 {
-                // EOF: 处理剩余数据
+                // EOF
                 if len > 0 {
                     if in_url {
                         let url_slice = &buf[url_start_idx..len];
