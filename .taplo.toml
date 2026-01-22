@@ -1,7 +1,7 @@
 exclude = ["target", "assets"]
 
 [[rule]]
-include = [".taplo.toml", "Cargo.toml", "rustfmt.toml"]
+include = [".taplo.toml", "**/Cargo.toml", "rustfmt.toml"]
 
 [rule.formatting]
 align_comments       = true
