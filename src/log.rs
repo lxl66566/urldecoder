@@ -26,10 +26,10 @@ pub mod logger {
 
 #[cfg(feature = "verbose-log")]
 pub mod logger {
-    use std::cell::RefCell;
-
-    #[cfg(feature = "color")]
-    use colored::Colorize;
+    use std::{
+        cell::RefCell,
+        io::{self, BufWriter, Write as _},
+    };
 
     use super::DecodeLogger;
 
@@ -83,8 +83,6 @@ pub mod logger {
                     LOG_RES_BUF.with(|res_cell| {
                         let orig = orig_cell.borrow();
                         let res = res_cell.borrow();
-                        let orig_s = String::from_utf8_lossy(&orig);
-                        let res_s = String::from_utf8_lossy(&res);
                         let orig_suffix = if orig.len() == LOG_ORIG_CAPACITY {
                             "..."
                         } else {
@@ -95,15 +93,15 @@ pub mod logger {
                         } else {
                             ""
                         };
-                        #[cfg(feature = "color")]
-                        {
-                            println!("{}", format!("- {}{}", orig_s, orig_suffix).red());
-                            println!("{}", format!("+ {}{}", res_s, res_suffix).green());
-                        }
-                        #[cfg(not(feature = "color"))]
-                        {
-                            println!("- {}{}\n+ {}{}", orig_s, orig_suffix, res_s, res_suffix);
-                        }
+                        let mut writer = BufWriter::new(io::stdout());
+                        writer.write_all("\x1b[31m- ".as_bytes()).unwrap();
+                        writer.write_all(&orig).unwrap();
+                        writer.write_all(orig_suffix.as_bytes()).unwrap();
+                        writer.write_all("\x1b[0m\n\x1b[32m+ ".as_bytes()).unwrap();
+                        writer.write_all(&res).unwrap();
+                        writer.write_all(res_suffix.as_bytes()).unwrap();
+                        writer.write_all("\x1b[0m\n".as_bytes()).unwrap();
+                        writer.flush().unwrap();
                     })
                 });
             }

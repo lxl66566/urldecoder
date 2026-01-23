@@ -13,7 +13,7 @@ use std::{
 use memchr::memchr;
 use snafu::{ResultExt, Snafu};
 
-use crate::log::{DecodeLogger, logger::Logger};
+use crate::log::{logger::Logger, DecodeLogger};
 
 // ============================================================================
 // Error Definitions (Snafu)
@@ -317,7 +317,8 @@ where
                                     // we might have a truncated "https://"
                                     if len - h_idx < 8 {
                                         offset = h_idx;
-                                        pos = len; // Stop processing, wait for next read
+                                        pos = len; // Stop processing, wait for
+                                                   // next read
                                     } else {
                                         pos = h_idx + 1;
                                     }

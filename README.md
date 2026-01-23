@@ -51,7 +51,6 @@ Features:
 
 - `bin`: For CLI compilation; enables rayon parallel decoding + glob matching.
 - `verbose-log`: Enables logging during decoding.
-- `color`: Enables colored log output.
 - `safe` (default): If the decoded URL is not valid UTF-8, do not decode it.
 
 Limits:

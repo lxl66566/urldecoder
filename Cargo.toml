@@ -17,7 +17,6 @@ version       = "2.0.0"
 
 [dependencies]
 clap     = { version = "4.5", features = ["derive"], optional = true }
-colored  = { version = "3", optional = true }
 glob     = { version = "0.3", optional = true }
 memchr   = "2"
 rayon    = { version = "1", optional = true }
@@ -33,8 +32,6 @@ criterion = "0.8.1"
 bin = ["rayon", "glob", "clap"]
 # verbose log (output diff)
 verbose-log = []
-# colorful log output, slower
-color = ["colored"]
 # if decoded url is not valid utf-8, do not decode
 safe = []
 # default features
