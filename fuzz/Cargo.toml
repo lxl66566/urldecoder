@@ -15,9 +15,20 @@ urlencoding   = "2.1.3"
 [dependencies.urldecoder]
 path = ".."
 
+[features]
+safe = ["urldecoder/safe"]
+
+[[bin]]
+bench             = false
+doc               = false
+name              = "fuzz_target_safe"
+path              = "fuzz_targets/fuzz_target_safe.rs"
+required-features = ["safe"]
+test              = false
+
 [[bin]]
 bench = false
 doc   = false
-name  = "fuzz_target_1"
-path  = "fuzz_targets/fuzz_target_1.rs"
+name  = "fuzz_target_unsafe"
+path  = "fuzz_targets/fuzz_target_unsafe.rs"
 test  = false

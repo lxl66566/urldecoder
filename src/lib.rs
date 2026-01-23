@@ -43,7 +43,7 @@ pub enum Error {
     WriteBack { path: PathBuf, source: io::Error },
 
     #[snafu(display("Invalid UTF-8 sequence: {}", source))]
-    InvalidUtf8 { source: std::string::FromUtf8Error },
+    InvalidUtf8 { source: simdutf8::basic::Utf8Error },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -271,10 +271,21 @@ fn decode_chunk(
         log_res!(b);
         i += 1;
     }
-
-    print_log!();
-
-    changed
+    #[cfg(not(feature = "safe"))]
+    {
+        print_log!();
+        #[allow(clippy::needless_return)]
+        return changed;
+    }
+    #[cfg(feature = "safe")]
+    {
+        if simdutf8::basic::from_utf8(out_vec).is_ok() {
+            print_log!();
+            changed
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(feature = "verbose-log")]
@@ -352,9 +363,11 @@ where
 
                             if decode_chunk(valid_url, out, escape_space, verbose) {
                                 has_changes = true;
+                                writer.write_all(out).context(WriteOutputSnafu)?;
+                                writer.write_all(suffix).context(WriteOutputSnafu)?;
+                            } else {
+                                writer.write_all(url_slice).context(WriteOutputSnafu)?;
                             }
-                            writer.write_all(out).context(WriteOutputSnafu)?;
-                            writer.write_all(suffix).context(WriteOutputSnafu)?;
                         } else {
                             writer
                                 .write_all(&buf[offset..len])
@@ -428,12 +441,12 @@ where
                             // Decode to the output buffer
                             if decode_chunk(valid_url, out, escape_space, verbose) {
                                 has_changes = true;
-                            }
-
-                            // Write result + suffix (if any)
-                            writer.write_all(out).context(WriteOutputSnafu)?;
-                            if !suffix.is_empty() {
-                                writer.write_all(suffix).context(WriteOutputSnafu)?;
+                                writer.write_all(out).context(WriteOutputSnafu)?;
+                                if !suffix.is_empty() {
+                                    writer.write_all(suffix).context(WriteOutputSnafu)?;
+                                }
+                            } else {
+                                writer.write_all(raw_url_slice).context(WriteOutputSnafu)?;
                             }
 
                             let processed_len = pos - url_start_idx;
@@ -471,8 +484,10 @@ where
                         // Force decode chunk
                         if decode_chunk(chunk, out, escape_space, verbose) {
                             has_changes = true;
+                            writer.write_all(out).context(WriteOutputSnafu)?;
+                        } else {
+                            writer.write_all(chunk).context(WriteOutputSnafu)?;
                         }
-                        writer.write_all(out).context(WriteOutputSnafu)?;
                         total_processed += cut_point as u64;
 
                         // Set offset so `copy_within` at top of loop moves the remainder
@@ -536,7 +551,12 @@ pub fn decode_str(input: &str, escape_space: bool, verbose: bool) -> Result<(Str
         let (_, changed) = decode_stream(input.as_bytes(), &mut writer, escape_space, verbose)?;
         changed
     };
-    Ok((String::from_utf8(buf).context(InvalidUtf8Snafu)?, changed))
+    Ok((
+        simdutf8::basic::from_utf8(&buf)
+            .context(InvalidUtf8Snafu)?
+            .to_owned(),
+        changed,
+    ))
 }
 
 /// Decodes a file and overwrites it if `dry_run` is false.

@@ -7,7 +7,10 @@ use urldecoder::decode_str;
 use urlencoding::decode;
 static REGEX: OnceLock<Regex> = OnceLock::new();
 
-pub fn decode_url_in_code_ref(code: &str, escape_space: bool) -> (String, bool) {
+#[cfg(not(feature = "safe"))]
+compile_error!("This target must be built with the 'safe' feature enabled!");
+
+pub fn decode_url_in_code_safe(code: &str, escape_space: bool) -> (String, bool) {
     if !code.contains("http") {
         return (code.to_string(), false);
     }
@@ -51,11 +54,10 @@ fuzz_target!(|data: &[u8]| {
         {
             let res = decode_str(input_str, true, false);
             if res.is_err() {
-                println!("Input: {:?}", input_str);
-                panic!("My impl crashed: {:?}", res);
+                panic!("Input: {:?}\nMy impl crashed: {:?}", input_str, res);
             }
             let (my_out, my_changed) = res.unwrap();
-            let (ref_out, ref_changed) = decode_url_in_code_ref(input_str, true);
+            let (ref_out, ref_changed) = decode_url_in_code_safe(input_str, true);
 
             assert_eq!(
                 my_out, ref_out,
@@ -73,11 +75,10 @@ fuzz_target!(|data: &[u8]| {
         {
             let res = decode_str(input_str, false, false);
             if res.is_err() {
-                println!("Input: {:?}", input_str);
-                panic!("My impl crashed: {:?}", res);
+                panic!("Input: {:?}\nMy impl crashed: {:?}", input_str, res);
             }
             let (my_out, my_changed) = res.unwrap();
-            let (ref_out, ref_changed) = decode_url_in_code_ref(input_str, false);
+            let (ref_out, ref_changed) = decode_url_in_code_safe(input_str, false);
 
             assert_eq!(
                 my_out, ref_out,

@@ -21,6 +21,7 @@ colored  = { version = "3", optional = true }
 glob     = { version = "0.3", optional = true }
 memchr   = "2"
 rayon    = { version = "1", optional = true }
+simdutf8 = "0.1.5"
 snafu    = "0.8"
 tempfile = "3.8"
 
@@ -28,10 +29,16 @@ tempfile = "3.8"
 criterion = "0.8.1"
 
 [features]
-bin         = ["rayon", "glob"]
-color       = ["colored"]
-default     = ["verbose-log"]
+# compile binary, allows to decode folder
+bin = ["rayon", "glob"]
+# verbose log (output diff)
 verbose-log = []
+# colorful log output, slower
+color = ["colored"]
+# if decoded url is not valid utf-8, do not decode
+safe = []
+# default features
+default = ["safe"]
 
 [profile.release]
 lto       = true
@@ -53,6 +60,6 @@ harness = false
 name    = "single_thread"
 
 [[bench]]
-features = ["bin"]
-harness  = false
-name     = "multi_files"
+harness           = false
+name              = "multi_files"
+required-features = ["bin"]

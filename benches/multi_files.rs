@@ -1,3 +1,4 @@
+#![cfg(feature = "bin")]
 use std::{
     fs::File,
     io::{BufWriter, Write},
