@@ -242,7 +242,7 @@ where
             let mut has_changes = false;
 
             let mut in_url = false;
-            let mut url_start_idx = 0;
+            let mut url_start_idx: usize = 0;
 
             loop {
                 // If there is leftover data, move it to the beginning of the buffer.
@@ -251,7 +251,7 @@ where
                     buf.copy_within(offset..len, 0);
                     len -= offset;
                     if in_url {
-                        url_start_idx -= offset;
+                        url_start_idx = url_start_idx.saturating_sub(offset);
                     }
                     offset = 0;
                 } else if offset == len {

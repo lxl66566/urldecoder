@@ -25,4 +25,4 @@ jobs:
             aarch64-apple-darwin
             x86_64-apple-darwin
           token: ${{ secrets.GH_TOKEN }}
-          features: bin, verbose-log, color
+          features: safe, bin, verbose-log, color
