@@ -1,8 +1,7 @@
 #![cfg(feature = "bin")]
-use std::{
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::path::{Path, PathBuf};
+#[cfg(feature = "verbose-log")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::{ArgAction, Parser};
 use glob::glob;
@@ -11,7 +10,11 @@ use snafu::ResultExt;
 use urldecoder::decode_file;
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None, after_help = r#"Examples:
+urldecoder test/t.md        # decode test/t.md
+urldecoder *.md -e my.md    # decode all markdown files in current folder except `my.md`
+urldecoder **/*             # decode all files recursively in current folder
+"#)]
 struct Cli {
     /// Files to process, allows wildcard pattern
     #[clap(required = true)]
@@ -21,7 +24,7 @@ struct Cli {
     #[arg(short, long)]
     dry_run: bool,
 
-    /// Do not print decode result
+    /// Do not print decode result to console
     #[arg(short, long)]
     no_output: bool,
 
@@ -48,8 +51,9 @@ fn main() -> Result<(), snafu::Whatever> {
         cli.files,
         &cli.exclude,
         cli.escape_space,
-        !cli.no_output,
         cli.dry_run,
+        #[cfg(feature = "verbose-log")]
+        !cli.no_output,
     )?;
 
     Ok(())
@@ -59,8 +63,8 @@ fn process_directory(
     files: Vec<String>,
     exclude: &[PathBuf],
     escape_space: bool,
-    verbose: bool,
     dry_run: bool,
+    #[cfg(feature = "verbose-log")] verbose: bool,
 ) -> Result<(), snafu::Whatever> {
     let mut paths = Vec::new();
     for pattern in &files {
@@ -77,28 +81,40 @@ fn process_directory(
         println!("No files found.");
         return Ok(());
     }
+    #[cfg(feature = "verbose-log")]
+    {
+        let processed_count = AtomicUsize::new(0);
+        let changed_count = AtomicUsize::new(0);
 
-    let processed_count = AtomicUsize::new(0);
-    let changed_count = AtomicUsize::new(0);
+        paths.par_iter().for_each(|path| {
+            if let Err(e) = decode_file(
+                path,
+                escape_space,
+                dry_run,
+                verbose,
+                &processed_count,
+                &changed_count,
+            ) {
+                eprintln!("ERROR processing {}: {}", path.display(), e);
+            }
+        });
 
-    paths.par_iter().for_each(|path| {
-        if let Err(e) = decode_file(
-            path,
-            escape_space,
-            verbose,
-            dry_run,
-            &processed_count,
-            &changed_count,
-        ) {
-            eprintln!("ERROR processing {}: {}", path.display(), e);
-        }
-    });
+        println!(
+            "Processed {} files, {} files changed.",
+            processed_count.load(Ordering::Relaxed),
+            changed_count.load(Ordering::Relaxed)
+        );
+    }
 
-    println!(
-        "Processed {} files, {} files changed.",
-        processed_count.load(Ordering::Relaxed),
-        changed_count.load(Ordering::Relaxed)
-    );
+    #[cfg(not(feature = "verbose-log"))]
+    {
+        paths.par_iter().for_each(|path| {
+            if let Err(e) = decode_file(path, escape_space, dry_run) {
+                eprintln!("ERROR processing {}: {}", path.display(), e);
+            }
+        });
+    }
+
     Ok(())
 }
 
@@ -160,6 +176,7 @@ mod tests {
             &[test_path.join("exclude.txt")],
             false,
             false,
+            #[cfg(feature = "verbose-log")]
             false,
         )
         .unwrap();

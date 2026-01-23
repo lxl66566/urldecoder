@@ -1,12 +1,13 @@
 #![warn(clippy::cargo)]
 
 mod log;
+#[cfg(feature = "verbose-log")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     cell::RefCell,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use memchr::memchr;
@@ -474,24 +475,28 @@ pub fn decode_str(input: &str, escape_space: bool, verbose: bool) -> Result<(Str
 ///
 /// * `path` - The path to the file to decode.
 /// * `escape_space` - Whether to decode `%20` to space.
-/// * `verbose` - Whether to print verbose logs. (needs `verbose-log` feature)
 /// * `dry_run` - Whether to print the result without overwriting the file.
-/// * `p_counter` - The counter for processed files.
-/// * `c_counter` - The counter for changed files.
+/// * `verbose` - Whether to print verbose logs. (needs `verbose-log` feature)
+/// * `p_counter` - The counter for processed files. (needs `verbose-log`
+///   feature)
+/// * `c_counter` - The counter for changed files. (needs `verbose-log` feature)
 pub fn decode_file(
     path: &Path,
     escape_space: bool,
-    verbose: bool,
     dry_run: bool,
-    p_counter: &AtomicUsize,
-    c_counter: &AtomicUsize,
+    #[cfg(feature = "verbose-log")] verbose: bool,
+    #[cfg(feature = "verbose-log")] p_counter: &AtomicUsize,
+    #[cfg(feature = "verbose-log")] c_counter: &AtomicUsize,
 ) -> Result<()> {
+    #[cfg(not(feature = "verbose-log"))]
+    let verbose = false;
+
     let file = File::open(path).context(OpenInputSnafu { path })?;
     let metadata = file.metadata().context(ReadInputSnafu)?;
     let file_len = metadata.len();
     let reader = BufReader::new(file);
 
-    let (_processed_bytes, changed) = if dry_run {
+    let (_processed_bytes, _changed) = if dry_run {
         decode_stream(reader, io::sink(), escape_space, verbose)?
     } else if file_len < SMALL_FILE_THRESHOLD {
         let mut buffer = Vec::with_capacity(file_len as usize);
@@ -524,14 +529,14 @@ pub fn decode_file(
         res
     };
 
-    p_counter.fetch_add(1, Ordering::Relaxed);
-
-    if changed {
-        c_counter.fetch_add(1, Ordering::Relaxed);
-        // Only print if feature is enabled AND verbose is true
-        #[cfg(feature = "verbose-log")]
-        if verbose {
-            println!("Processed File: {:?}", path);
+    #[cfg(feature = "verbose-log")]
+    {
+        p_counter.fetch_add(1, Ordering::Relaxed);
+        if _changed {
+            c_counter.fetch_add(1, Ordering::Relaxed);
+            if verbose {
+                println!("Processed File: {:?}", path);
+            }
         }
     }
 

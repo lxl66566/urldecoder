@@ -2,9 +2,9 @@
 
 English | [简体中文](./docs/README.zh-CN.md)
 
-A high-performance CLI tool and Rust library for batch URL decoding.
+CLI tool and Rust library for batch URL decoding. Blazing fast.
 
-Decoding shortens string length and improves readability. For example:
+Decoding shortens string length and improves readability, especially in blogs, posts and documents. For example:
 
 ```diff
 - https://github.com/lxl66566/my-college-files/tree/main/%E4%BF%A1%E6%81%AF%E7%A7%91%E5%AD%A6%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%AD%A6%E9%99%A2/%E5%B5%8C%E5%85%A5%E5%BC%8F%E7%B3%BB%E7%BB%9F
@@ -16,16 +16,16 @@ Decoding shortens string length and improves readability. For example:
 ### CLI
 
 ```sh
-Usage: urldecoder [OPTIONS] <FILES>...
+Usage: urldecoder.exe [OPTIONS] <FILES>...
 
 Arguments:
-  <FILES>...  Input file patterns (supports glob)
+  <FILES>...  Files to process, allows wildcard pattern
 
 Options:
-  -d, --dry-run            Test run only; do not modify files
-  -v, --verbose            Show verbose errors and details
-  -e, --exclude <EXCLUDE>  Exclude files or folders (prefix match)
-      --escape-space       Do not decode `%20` to spaces
+  -d, --dry-run            Show result only, without overwrite
+  -n, --no-output          Do not print decode result to console
+  -e, --exclude <EXCLUDE>  Exclude file or folder by relative path prefix
+      --escape-space       Do not decode `%20` to space
   -h, --help               Print help
   -V, --version            Print version
 
@@ -40,7 +40,7 @@ The `node_modules` folder is excluded by default.
 A real-world usage example:
 
 ```sh
-urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space 'src/**/*.md'
+urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space 'src/**/*.md' 'src/.vuepress/components/*' 'src/.vuepress/data/*'
 ```
 
 ### Rust Library
@@ -52,7 +52,7 @@ Features:
 - `bin`: For CLI compilation; enables rayon parallel decoding + glob matching.
 - `verbose-log`: Enables logging during decoding.
 - `color`: Enables colored log output.
-- `safe` (default): If the decoded URL is not valid UTF-8, do not decode.
+- `safe` (default): If the decoded URL is not valid UTF-8, do not decode it.
 
 Limits:
 

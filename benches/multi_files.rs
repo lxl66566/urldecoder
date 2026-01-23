@@ -1,9 +1,10 @@
 #![cfg(feature = "bin")]
+#[cfg(feature = "verbose-log")]
+use std::sync::atomic::AtomicUsize;
 use std::{
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
-    sync::atomic::AtomicUsize,
 };
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
@@ -74,19 +75,22 @@ fn bench_decode_throughput(c: &mut Criterion) {
 
     group.bench_function("rayon_decode_dry_run", |b| {
         b.iter(|| {
-            let processed_count = AtomicUsize::new(0);
-            let changed_count = AtomicUsize::new(0);
             let escape_space = false;
-            let verbose = false;
             let dry_run = true;
-
+            #[cfg(feature = "verbose-log")]
+            let processed_count = AtomicUsize::new(0);
+            #[cfg(feature = "verbose-log")]
+            let changed_count = AtomicUsize::new(0);
             paths.par_iter().for_each(|path| {
                 decode_file(
                     path,
                     escape_space,
-                    verbose,
                     dry_run,
+                    #[cfg(feature = "verbose-log")]
+                    false,
+                    #[cfg(feature = "verbose-log")]
                     &processed_count,
+                    #[cfg(feature = "verbose-log")]
                     &changed_count,
                 )
                 .unwrap();
