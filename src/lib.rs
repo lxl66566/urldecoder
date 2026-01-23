@@ -381,6 +381,7 @@ where
                                         .write_all(&buf[offset..h_idx])
                                         .context(WriteOutputSnafu)?;
                                     total_processed += (h_idx - offset) as u64;
+                                    offset = h_idx;
                                 }
 
                                 if let Some(prefix_len) = check_url_prefix(&buf[h_idx..len]) {
