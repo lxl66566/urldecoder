@@ -1,110 +1,109 @@
+use std::io::{self, Write as _};
+
 pub trait DecodeLogger {
-    fn init(enabled: bool) -> Self;
-    fn log_orig(&self, byte: u8);
-    fn log_res(&self, byte: u8);
-    fn print_if_changed(&self, changed: bool);
+    fn new() -> Self
+    where
+        Self: Sized;
+    fn log_orig(&mut self, byte: u8);
+    fn log_res(&mut self, byte: u8);
+    fn print_if_changed(&mut self, changed: bool);
+    fn clear(&mut self);
 }
 
-#[cfg(not(feature = "verbose-log"))]
-pub mod logger {
-    use super::DecodeLogger;
-
-    pub struct Logger;
-    impl DecodeLogger for Logger {
-        #[inline(always)]
-        fn init(_: bool) -> Self {
-            Self {}
-        }
-        #[inline(always)]
-        fn log_orig(&self, _: u8) {}
-        #[inline(always)]
-        fn log_res(&self, _: u8) {}
-        #[inline(always)]
-        fn print_if_changed(&self, _: bool) {}
+pub struct NoOpLogger;
+impl DecodeLogger for NoOpLogger {
+    #[inline(always)]
+    fn new() -> Self {
+        Self
     }
+    #[inline(always)]
+    fn log_orig(&mut self, _: u8) {}
+    #[inline(always)]
+    fn log_res(&mut self, _: u8) {}
+    #[inline(always)]
+    fn print_if_changed(&mut self, _: bool) {}
+    #[inline(always)]
+    fn clear(&mut self) {}
 }
 
-#[cfg(feature = "verbose-log")]
-pub mod logger {
-    use std::{
-        cell::RefCell,
-        io::{self, BufWriter, Write as _},
-    };
+const LOG_RES_CAPACITY: usize = 256;
+const LOG_ORIG_CAPACITY: usize = LOG_RES_CAPACITY * 3;
 
-    use super::DecodeLogger;
+const ELLIPSIS: &[u8; 3] = b"...";
 
-    const LOG_RES_CAPACITY: usize = 256;
-    const LOG_ORIG_CAPACITY: usize = LOG_RES_CAPACITY * 3;
+pub struct VerboseLogger {
+    res_len: usize,
+    res_buf: [u8; LOG_RES_CAPACITY],
+    orig_len: usize,
+    orig_buf: [u8; LOG_ORIG_CAPACITY],
+}
 
-    thread_local! {
-        static LOG_RES_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(LOG_RES_CAPACITY));
-        static LOG_ORIG_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(LOG_ORIG_CAPACITY));
+impl DecodeLogger for VerboseLogger {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            res_len: 0,
+            res_buf: [0; LOG_RES_CAPACITY],
+            orig_len: 0,
+            orig_buf: [0; LOG_ORIG_CAPACITY],
+        }
     }
 
     #[inline(always)]
-    fn push_limit(vec: &mut Vec<u8>, byte: u8, limit: usize) {
-        if vec.len() < limit {
-            vec.push(byte);
+    fn log_orig(&mut self, byte: u8) {
+        if self.orig_len < LOG_ORIG_CAPACITY {
+            unsafe {
+                *self.orig_buf.get_unchecked_mut(self.orig_len) = byte;
+            }
+            self.orig_len += 1;
         }
     }
 
-    pub struct Logger {
-        enabled: bool,
+    #[inline(always)]
+    fn log_res(&mut self, byte: u8) {
+        if self.res_len < LOG_RES_CAPACITY {
+            unsafe {
+                *self.res_buf.get_unchecked_mut(self.res_len) = byte;
+            }
+            self.res_len += 1;
+        }
     }
 
-    impl DecodeLogger for Logger {
-        #[inline]
-        fn init(enabled: bool) -> Self {
-            if enabled {
-                LOG_RES_BUF.with(|b| b.borrow_mut().clear());
-                LOG_ORIG_BUF.with(|b| b.borrow_mut().clear());
-            }
-            Self { enabled }
+    #[inline]
+    fn print_if_changed(&mut self, changed: bool) {
+        if !changed {
+            return;
         }
 
-        #[inline]
-        fn log_orig(&self, byte: u8) {
-            if self.enabled {
-                LOG_ORIG_BUF.with(|buf| push_limit(&mut buf.borrow_mut(), byte, LOG_ORIG_CAPACITY));
-            }
-        }
+        self.print_impl();
+    }
 
-        #[inline]
-        fn log_res(&self, byte: u8) {
-            if self.enabled {
-                LOG_RES_BUF.with(|buf| push_limit(&mut buf.borrow_mut(), byte, LOG_RES_CAPACITY));
-            }
-        }
+    #[inline(always)]
+    fn clear(&mut self) {
+        self.res_len = 0;
+        self.orig_len = 0;
+    }
+}
 
-        #[inline]
-        fn print_if_changed(&self, changed: bool) {
-            if self.enabled && changed {
-                LOG_ORIG_BUF.with(|orig_cell| {
-                    LOG_RES_BUF.with(|res_cell| {
-                        let orig = orig_cell.borrow();
-                        let res = res_cell.borrow();
-                        let orig_suffix = if orig.len() == LOG_ORIG_CAPACITY {
-                            "..."
-                        } else {
-                            ""
-                        };
-                        let res_suffix = if res.len() == LOG_RES_CAPACITY {
-                            "..."
-                        } else {
-                            ""
-                        };
-                        let mut writer = BufWriter::new(io::stdout());
-                        writer.write_all("\x1b[31m- ".as_bytes()).unwrap();
-                        writer.write_all(&orig).unwrap();
-                        writer.write_all(orig_suffix.as_bytes()).unwrap();
-                        writer.write_all("\x1b[0m\n\x1b[32m+ ".as_bytes()).unwrap();
-                        writer.write_all(&res).unwrap();
-                        writer.write_all(res_suffix.as_bytes()).unwrap();
-                        writer.write_all("\x1b[0m\n".as_bytes()).unwrap();
-                        writer.flush().unwrap();
-                    })
-                });
-            }
+impl VerboseLogger {
+    fn print_impl(&mut self) {
+        let orig = &self.orig_buf[..self.orig_len];
+        let res = &self.res_buf[..self.res_len];
+
+        let stdout = io::stdout();
+        let handle = stdout.lock();
+        let mut writer = io::BufWriter::new(handle);
+        writer.write_all("\x1b[31m- ".as_bytes()).unwrap();
+        writer.write_all(orig).unwrap();
+        if self.orig_len == LOG_ORIG_CAPACITY {
+            writer.write_all(ELLIPSIS).unwrap();
         }
+        writer.write_all("\x1b[0m\n\x1b[32m+ ".as_bytes()).unwrap();
+        writer.write_all(res).unwrap();
+        if self.res_len == LOG_RES_CAPACITY {
+            writer.write_all(ELLIPSIS).unwrap();
+        }
+        writer.write_all("\x1b[0m\n".as_bytes()).unwrap();
+        writer.flush().unwrap();
     }
 }

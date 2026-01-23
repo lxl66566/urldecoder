@@ -13,7 +13,7 @@ use std::{
 use memchr::memchr;
 use snafu::{ResultExt, Snafu};
 
-use crate::log::{logger::Logger, DecodeLogger};
+use crate::log::{DecodeLogger, NoOpLogger, VerboseLogger};
 
 // ============================================================================
 // Error Definitions (Snafu)
@@ -123,13 +123,13 @@ fn decode_chunk(
     url_bytes: &[u8],
     out_vec: &mut Vec<u8>,
     escape_space: bool,
-    verbose: bool,
+    logger: &mut impl DecodeLogger,
 ) -> bool {
     let mut i = 0;
     let len = url_bytes.len();
     let mut changed = false;
 
-    let logger = Logger::init(verbose);
+    logger.clear();
 
     while i < len {
         let remaining = &url_bytes[i..];
@@ -206,27 +206,16 @@ fn decode_chunk(
     changed
 }
 
-/// Decodes the urls in the stream, writes the result to writer.
-///
-/// # Arguments
-///
-/// * `reader` - The reader to read the stream from.
-/// * `writer` - The writer to write the decoded stream to.
-/// * `escape_space` - Whether to decode `%20` to space.
-/// * `verbose` - Whether to print verbose logs. (needs `verbose-log` feature)
-///
-/// # Returns
-///
-/// (number of processed bytes, whether the decode happened)
-pub fn decode_stream<R, W>(
+fn decode_stream_inner<R, W, L>(
     mut reader: R,
     mut writer: W,
     escape_space: bool,
-    verbose: bool,
+    mut logger: L,
 ) -> Result<(u64, bool)>
 where
     R: Read,
     W: Write,
+    L: DecodeLogger,
 {
     IO_BUF.with(|io_cell| {
         OUT_BUF.with(|out_cell| {
@@ -271,7 +260,7 @@ where
                             let url_slice = &buf[url_start_idx..len];
                             let (valid_url, suffix) = trim_url_end(url_slice);
 
-                            if decode_chunk(valid_url, out, escape_space, verbose) {
+                            if decode_chunk(valid_url, out, escape_space, &mut logger) {
                                 has_changes = true;
                                 writer.write_all(out).context(WriteOutputSnafu)?;
                                 writer.write_all(suffix).context(WriteOutputSnafu)?;
@@ -318,7 +307,7 @@ where
                                     if len - h_idx < 8 {
                                         offset = h_idx;
                                         pos = len; // Stop processing, wait for
-                                                   // next read
+                                    // next read
                                     } else {
                                         pos = h_idx + 1;
                                     }
@@ -350,7 +339,7 @@ where
                             let (valid_url, suffix) = trim_url_end(raw_url_slice);
 
                             // Decode to the output buffer
-                            if decode_chunk(valid_url, out, escape_space, verbose) {
+                            if decode_chunk(valid_url, out, escape_space, &mut logger) {
                                 has_changes = true;
                                 writer.write_all(out).context(WriteOutputSnafu)?;
                                 writer.write_all(suffix).context(WriteOutputSnafu)?;
@@ -391,7 +380,7 @@ where
                         out.clear();
                         let chunk = &buf[..cut_point];
                         // Force decode chunk
-                        if decode_chunk(chunk, out, escape_space, verbose) {
+                        if decode_chunk(chunk, out, escape_space, &mut logger) {
                             has_changes = true;
                             writer.write_all(out).context(WriteOutputSnafu)?;
                         } else {
@@ -416,6 +405,37 @@ where
             Ok((total_processed, has_changes))
         })
     })
+}
+
+/// Decodes the urls in the stream, writes the result to writer.
+///
+/// # Arguments
+///
+/// * `reader` - The reader to read the stream from.
+/// * `writer` - The writer to write the decoded stream to.
+/// * `escape_space` - Whether to decode `%20` to space.
+/// * `verbose` - Whether to print verbose logs. (needs `verbose-log` feature)
+///
+/// # Returns
+///
+/// (number of processed bytes, whether the decode happened)
+pub fn decode_stream<R, W>(
+    reader: R,
+    writer: W,
+    escape_space: bool,
+    verbose: bool,
+) -> Result<(u64, bool)>
+where
+    R: Read,
+    W: Write,
+{
+    if verbose {
+        let logger = VerboseLogger::new();
+        decode_stream_inner(reader, writer, escape_space, logger)
+    } else {
+        let logger = NoOpLogger;
+        decode_stream_inner(reader, writer, escape_space, logger)
+    }
 }
 
 #[inline]
