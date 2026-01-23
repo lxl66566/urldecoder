@@ -1,4 +1,6 @@
 #![warn(clippy::cargo)]
+
+mod log;
 use std::{
     cell::RefCell,
     fs::{self, File},
@@ -7,10 +9,10 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-#[cfg(feature = "color")]
-use colored::Colorize;
 use memchr::memchr;
 use snafu::{ResultExt, Snafu};
+
+use crate::log::{DecodeLogger, logger::Logger};
 
 // ============================================================================
 // Error Definitions (Snafu)
@@ -55,12 +57,6 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 const SMALL_FILE_THRESHOLD: u64 = 1024 * 1024;
 const IO_BUF_SIZE: usize = 64 * 1024;
 
-// Logging constants
-#[cfg(feature = "verbose-log")]
-const LOG_RES_CAPACITY: usize = 256;
-#[cfg(feature = "verbose-log")]
-const LOG_ORIG_CAPACITY: usize = LOG_RES_CAPACITY * 3;
-
 thread_local! {
     /// Reusable IO buffer for reading input.
     static IO_BUF: RefCell<Vec<u8>> = RefCell::new(vec![0u8; IO_BUF_SIZE]);
@@ -68,14 +64,6 @@ thread_local! {
     /// Reusable output buffer to batch writes and allow SIMD optimizations.
     /// Capacity is doubled to ensure enough space for expansions if needed.
     static OUT_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(IO_BUF_SIZE * 2));
-
-    /// Reusable buffer for the decoded result logging.
-    #[cfg(feature = "verbose-log")]
-    static LOG_RES_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(LOG_RES_CAPACITY));
-
-    /// Reusable buffer for the original URL logging.
-    #[cfg(feature = "verbose-log")]
-    static LOG_ORIG_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(LOG_ORIG_CAPACITY));
 }
 
 const URL_CHAR: [bool; 256] = gen_url_map(b"-+&@#/%?=~_|!:,.;");
@@ -107,8 +95,10 @@ const fn gen_url_map(symbols: &[u8]) -> [bool; 256] {
     map
 }
 
+const HEX_INVALID: u8 = 0xFF;
+
 const fn gen_hex_map() -> [u8; 256] {
-    let mut map = [255; 256];
+    let mut map = [HEX_INVALID; 256];
     let mut i = 0;
     while i < 10 {
         map[(b'0' + i) as usize] = i;
@@ -123,16 +113,6 @@ const fn gen_hex_map() -> [u8; 256] {
     map
 }
 
-#[inline(always)]
-fn is_hex(c: u8) -> bool {
-    HEX_MAP[c as usize] != 255
-}
-
-#[inline(always)]
-fn from_hex(c: u8) -> u8 {
-    HEX_MAP[c as usize]
-}
-
 // ============================================================================
 // Core Logic
 // ============================================================================
@@ -142,158 +122,87 @@ fn decode_chunk(
     url_bytes: &[u8],
     out_vec: &mut Vec<u8>,
     escape_space: bool,
-    _verbose: bool,
+    verbose: bool,
 ) -> bool {
     let mut i = 0;
     let len = url_bytes.len();
     let mut changed = false;
 
-    // Reserve space to avoid frequent reallocations
-    out_vec.reserve(len);
-
-    // ------------------------------------------------------------------------
-    // Conditional Compilation Macros for Logging
-    // ------------------------------------------------------------------------
-    #[cfg(feature = "verbose-log")]
-    macro_rules! init_log {
-        () => {
-            if _verbose {
-                LOG_RES_BUF.with(|b| b.borrow_mut().clear());
-                LOG_ORIG_BUF.with(|b| b.borrow_mut().clear());
-            }
-        };
-    }
-    #[cfg(not(feature = "verbose-log"))]
-    macro_rules! init_log {
-        () => {};
-    }
-
-    #[cfg(feature = "verbose-log")]
-    macro_rules! log_orig {
-        ($b:expr) => {
-            if _verbose {
-                LOG_ORIG_BUF.with(|buf| push_limit(&mut buf.borrow_mut(), $b, LOG_ORIG_CAPACITY));
-            }
-        };
-    }
-    #[cfg(not(feature = "verbose-log"))]
-    macro_rules! log_orig {
-        ($b:expr) => {};
-    }
-
-    #[cfg(feature = "verbose-log")]
-    macro_rules! log_res {
-        ($b:expr) => {
-            if _verbose {
-                LOG_RES_BUF.with(|buf| push_limit(&mut buf.borrow_mut(), $b, LOG_RES_CAPACITY));
-            }
-        };
-    }
-    #[cfg(not(feature = "verbose-log"))]
-    macro_rules! log_res {
-        ($b:expr) => {};
-    }
-
-    #[cfg(feature = "verbose-log")]
-    macro_rules! print_log {
-        () => {
-            if _verbose && changed {
-                LOG_ORIG_BUF.with(|orig_cell| {
-                    LOG_RES_BUF.with(|res_cell| {
-                        let orig = orig_cell.borrow();
-                        let res = res_cell.borrow();
-                        let orig_s = String::from_utf8_lossy(&orig);
-                        let res_s = String::from_utf8_lossy(&res);
-                        let orig_suffix = if orig.len() == LOG_ORIG_CAPACITY {
-                            "..."
-                        } else {
-                            ""
-                        };
-                        let res_suffix = if res.len() == LOG_RES_CAPACITY {
-                            "..."
-                        } else {
-                            ""
-                        };
-                        #[cfg(feature = "color")]
-                        {
-                            println!("{}", format!("- {}{}", orig_s, orig_suffix).red());
-                            println!("{}", format!("+ {}{}", res_s, res_suffix).green());
-                        }
-                        #[cfg(not(feature = "color"))]
-                        {
-                            println!("- {}{}\n+ {}{}", orig_s, orig_suffix, res_s, res_suffix);
-                        }
-                    })
-                });
-            }
-        };
-    }
-    #[cfg(not(feature = "verbose-log"))]
-    macro_rules! print_log {
-        () => {};
-    }
-    // ------------------------------------------------------------------------
-
-    init_log!();
+    let logger = Logger::init(verbose);
 
     while i < len {
-        let b = url_bytes[i];
-        if b == b'%' && i + 2 < len {
-            let h1 = url_bytes[i + 1];
-            let h2 = url_bytes[i + 2];
-
-            if is_hex(h1) && is_hex(h2) {
-                let decoded_byte = (from_hex(h1) << 4) | from_hex(h2);
-
-                if escape_space && decoded_byte == b' ' {
-                    out_vec.extend_from_slice(b"%20");
-                    log_orig!(b'%');
-                    log_orig!(b'2');
-                    log_orig!(b'0');
-                    log_res!(b'%');
-                    log_res!(b'2');
-                    log_res!(b'0');
-                } else {
-                    out_vec.push(decoded_byte);
-                    log_orig!(b'%');
-                    log_orig!(h1);
-                    log_orig!(h2);
-                    log_res!(decoded_byte);
-                    changed = true;
+        let remaining = &url_bytes[i..];
+        match memchr(b'%', remaining) {
+            Some(pos) => {
+                if pos > 0 {
+                    let chunk = &remaining[..pos];
+                    out_vec.extend_from_slice(chunk);
+                    for &b in chunk {
+                        logger.log_orig(b);
+                        logger.log_res(b);
+                    }
                 }
-                i += 3;
-                continue;
+                i += pos;
+                if i + 2 < len {
+                    let h1 = url_bytes[i + 1];
+                    let h2 = url_bytes[i + 2];
+                    let v1 = HEX_MAP[h1 as usize];
+                    let v2 = HEX_MAP[h2 as usize];
+
+                    if v1 != HEX_INVALID && v2 != HEX_INVALID {
+                        let decoded_byte = (v1 << 4) | v2;
+
+                        if escape_space && decoded_byte == b' ' {
+                            out_vec.extend_from_slice(b"%20");
+                            logger.log_orig(b'%');
+                            logger.log_orig(b'2');
+                            logger.log_orig(b'0');
+                            logger.log_res(b'%');
+                            logger.log_res(b'2');
+                            logger.log_res(b'0');
+                        } else {
+                            out_vec.push(decoded_byte);
+                            changed = true;
+                            logger.log_orig(b'%');
+                            logger.log_orig(h1);
+                            logger.log_orig(h2);
+                            logger.log_res(decoded_byte);
+                        }
+                        i += 3;
+                    } else {
+                        out_vec.push(b'%');
+                        logger.log_orig(b'%');
+                        logger.log_res(b'%');
+                        i += 1;
+                    }
+                } else {
+                    out_vec.push(b'%');
+                    logger.log_orig(b'%');
+                    logger.log_res(b'%');
+
+                    i += 1;
+                }
+            }
+            None => {
+                let chunk = &url_bytes[i..];
+                out_vec.extend_from_slice(chunk);
+                for &b in chunk {
+                    logger.log_orig(b);
+                    logger.log_res(b);
+                }
+
+                i = len;
             }
         }
+    }
 
-        out_vec.push(b);
-        log_orig!(b);
-        log_res!(b);
-        i += 1;
-    }
-    #[cfg(not(feature = "safe"))]
-    {
-        print_log!();
-        #[allow(clippy::needless_return)]
-        return changed;
-    }
     #[cfg(feature = "safe")]
-    {
-        if simdutf8::basic::from_utf8(out_vec).is_ok() {
-            print_log!();
-            changed
-        } else {
-            false
-        }
+    if simdutf8::basic::from_utf8(out_vec).is_err() {
+        return false;
     }
-}
 
-#[cfg(feature = "verbose-log")]
-#[inline]
-fn push_limit(vec: &mut Vec<u8>, byte: u8, limit: usize) {
-    if vec.len() < limit {
-        vec.push(byte);
-    }
+    logger.print_if_changed(changed);
+    changed
 }
 
 /// Decodes the urls in the stream, writes the result to writer.
@@ -442,9 +351,7 @@ where
                             if decode_chunk(valid_url, out, escape_space, verbose) {
                                 has_changes = true;
                                 writer.write_all(out).context(WriteOutputSnafu)?;
-                                if !suffix.is_empty() {
-                                    writer.write_all(suffix).context(WriteOutputSnafu)?;
-                                }
+                                writer.write_all(suffix).context(WriteOutputSnafu)?;
                             } else {
                                 writer.write_all(raw_url_slice).context(WriteOutputSnafu)?;
                             }

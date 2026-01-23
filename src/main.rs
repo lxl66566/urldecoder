@@ -1,11 +1,10 @@
+#![cfg(feature = "bin")]
 use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
 use clap::{ArgAction, Parser};
-#[cfg(feature = "color")]
-use colored::Colorize;
 use glob::glob;
 use rayon::prelude::*;
 use snafu::ResultExt;
@@ -22,11 +21,11 @@ struct Cli {
     #[arg(short, long)]
     dry_run: bool,
 
-    /// Show processed files
+    /// Do not print decode result
     #[arg(short, long)]
-    verbose: bool,
+    no_output: bool,
 
-    /// Exclude file or folder
+    /// Exclude file or folder by relative path prefix
     #[arg(short, long, action = ArgAction::Append)]
     exclude: Vec<PathBuf>,
 
@@ -49,7 +48,7 @@ fn main() -> Result<(), snafu::Whatever> {
         cli.files,
         &cli.exclude,
         cli.escape_space,
-        cli.verbose,
+        !cli.no_output,
         cli.dry_run,
     )?;
 
@@ -91,10 +90,7 @@ fn process_directory(
             &processed_count,
             &changed_count,
         ) {
-            #[cfg(not(feature = "color"))]
-            eprintln!("{} {}: {}", "ERROR", path.display(), e);
-            #[cfg(feature = "color")]
-            eprintln!("{} {}: {}", "ERROR".red().bold(), path.display(), e);
+            eprintln!("ERROR processing {}: {}", path.display(), e);
         }
     });
 
