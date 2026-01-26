@@ -5,7 +5,9 @@ pub trait DecodeLogger {
     where
         Self: Sized;
     fn log_orig(&mut self, byte: u8);
+    fn log_orig_slice(&mut self, slice: &[u8]);
     fn log_res(&mut self, byte: u8);
+    fn log_res_slice(&mut self, slice: &[u8]);
     fn print_if_changed(&mut self, changed: bool);
     fn clear(&mut self);
 }
@@ -19,7 +21,11 @@ impl DecodeLogger for NoOpLogger {
     #[inline(always)]
     fn log_orig(&mut self, _: u8) {}
     #[inline(always)]
+    fn log_orig_slice(&mut self, _: &[u8]) {}
+    #[inline(always)]
     fn log_res(&mut self, _: u8) {}
+    #[inline(always)]
+    fn log_res_slice(&mut self, _: &[u8]) {}
     #[inline(always)]
     fn print_if_changed(&mut self, _: bool) {}
     #[inline(always)]
@@ -60,12 +66,48 @@ impl DecodeLogger for VerboseLogger {
     }
 
     #[inline(always)]
+    fn log_orig_slice(&mut self, slice: &[u8]) {
+        unsafe {
+            if self.orig_len + slice.len() < LOG_ORIG_CAPACITY {
+                self.orig_buf
+                    .get_unchecked_mut(self.orig_len..)
+                    .copy_from_slice(slice);
+                self.orig_len += slice.len();
+            } else {
+                let cp = LOG_ORIG_CAPACITY - self.orig_len;
+                self.orig_buf
+                    .get_unchecked_mut(self.orig_len..)
+                    .copy_from_slice(&slice[..cp]);
+                self.orig_len = LOG_ORIG_CAPACITY;
+            }
+        }
+    }
+
+    #[inline(always)]
     fn log_res(&mut self, byte: u8) {
         if self.res_len < LOG_RES_CAPACITY {
             unsafe {
                 *self.res_buf.get_unchecked_mut(self.res_len) = byte;
             }
             self.res_len += 1;
+        }
+    }
+
+    #[inline(always)]
+    fn log_res_slice(&mut self, slice: &[u8]) {
+        unsafe {
+            if self.res_len + slice.len() < LOG_RES_CAPACITY {
+                self.res_buf
+                    .get_unchecked_mut(self.res_len..)
+                    .copy_from_slice(slice);
+                self.res_len += slice.len();
+            } else {
+                let cp = LOG_RES_CAPACITY - self.res_len;
+                self.res_buf
+                    .get_unchecked_mut(self.res_len..)
+                    .copy_from_slice(&slice[..cp]);
+                self.res_len = LOG_RES_CAPACITY;
+            }
         }
     }
 

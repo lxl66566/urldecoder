@@ -116,21 +116,20 @@ fn trim_url_end(slice: &[u8]) -> (&[u8], &[u8]) {
 // Core Logic
 // ============================================================================
 
-/// In-place decode, used when we don't need to worry about rolling back on
-/// UTF-8 errors (unsafe mode).
+/// Direct decode
 ///
 /// # Returns
 ///
-/// (new_len, changed)
+/// changed or not
 #[cfg(not(feature = "safe"))]
-fn decode_chunk_in_place(
-    buf: &mut [u8],
+fn decode_chunk_to_writer<W: Write>(
+    buf: &[u8],
+    writer: &mut W,
     escape_space: bool,
     logger: &mut impl DecodeLogger,
-) -> (usize, bool) {
+) -> std::io::Result<bool> {
     let len = buf.len();
     let mut r = 0; // Read index
-    let mut w = 0; // Write index
     let mut changed = false;
 
     logger.clear();
@@ -139,25 +138,15 @@ fn decode_chunk_in_place(
         let remaining = &buf[r..];
         match memchr(b'%', remaining) {
             Some(pos) => {
-                // Copy the non-URL-encoded part (plain text)
-                // If w != r, we need to move data. If w == r, it's already there.
                 if pos > 0 {
-                    if w != r {
-                        buf.copy_within(r..r + pos, w);
-                    }
+                    writer.write_all(&remaining[..pos])?;
 
                     // Log plain text
-                    for i in 0..pos {
-                        let b = buf[r + i];
-                        logger.log_orig(b);
-                        logger.log_res(b);
-                    }
-
+                    logger.log_orig_slice(&remaining[..pos]);
+                    logger.log_res_slice(&remaining[..pos]);
                     r += pos;
-                    w += pos;
                 }
 
-                // Now buf[r] is '%'
                 if r + 2 < len {
                     let h1 = buf[r + 1];
                     let h2 = buf[r + 2];
@@ -168,68 +157,41 @@ fn decode_chunk_in_place(
                         let decoded_byte = (v1 << 4) | v2;
 
                         if escape_space && decoded_byte == b' ' {
-                            buf[w] = b'%';
-                            buf[w + 1] = b'2';
-                            buf[w + 2] = b'0';
-
-                            logger.log_orig(b'%');
-                            logger.log_orig(b'2');
-                            logger.log_orig(b'0');
-                            logger.log_res(b'%');
-                            logger.log_res(b'2');
-                            logger.log_res(b'0');
-
-                            w += 3;
+                            writer.write_all(b"%20")?;
+                            logger.log_orig_slice(b"%20");
+                            logger.log_res_slice(b"%20");
                         } else {
-                            // Reduction case: %XX -> X (3 bytes -> 1 byte)
-                            buf[w] = decoded_byte;
+                            writer.write_all(&[decoded_byte])?;
                             changed = true;
-
                             logger.log_orig(b'%');
                             logger.log_orig(h1);
                             logger.log_orig(h2);
                             logger.log_res(decoded_byte);
-
-                            w += 1;
                         }
                         r += 3;
                     } else {
-                        // Invalid hex, keep '%'
-                        buf[w] = b'%';
+                        writer.write_all(b"%")?;
                         logger.log_orig(b'%');
                         logger.log_res(b'%');
-                        w += 1;
                         r += 1;
                     }
                 } else {
-                    // Truncated at end, keep '%'
-                    buf[w] = b'%';
+                    writer.write_all(b"%")?;
                     logger.log_orig(b'%');
                     logger.log_res(b'%');
-                    w += 1;
                     r += 1;
                 }
             }
             None => {
-                // No more '%', copy remaining
-                let remaining_len = len - r;
-                if remaining_len > 0 {
-                    if w != r {
-                        buf.copy_within(r..len, w);
-                    }
-                    for i in 0..remaining_len {
-                        let b = buf[r + i];
-                        logger.log_orig(b);
-                        logger.log_res(b);
-                    }
-                    w += remaining_len;
-                    r = len;
-                }
+                writer.write_all(remaining)?;
+                logger.log_orig_slice(remaining);
+                logger.log_res_slice(remaining);
+                r = len;
             }
         }
     }
-
-    (w, changed)
+    logger.print_if_changed(changed);
+    Ok(changed)
 }
 
 /// Decodes a URL slice, appends result to `out_vec`.
@@ -253,10 +215,8 @@ fn decode_chunk_safe(
                 if pos > 0 {
                     let chunk = &remaining[..pos];
                     out_vec.extend_from_slice(chunk);
-                    for &b in chunk {
-                        logger.log_orig(b);
-                        logger.log_res(b);
-                    }
+                    logger.log_orig_slice(chunk);
+                    logger.log_res_slice(chunk);
                 }
                 i += pos;
                 if i + 2 < len {
@@ -270,12 +230,8 @@ fn decode_chunk_safe(
 
                         if escape_space && decoded_byte == b' ' {
                             out_vec.extend_from_slice(b"%20");
-                            logger.log_orig(b'%');
-                            logger.log_orig(b'2');
-                            logger.log_orig(b'0');
-                            logger.log_res(b'%');
-                            logger.log_res(b'2');
-                            logger.log_res(b'0');
+                            logger.log_orig_slice(b"%20");
+                            logger.log_res_slice(b"%20");
                         } else {
                             out_vec.push(decoded_byte);
                             changed = true;
@@ -302,10 +258,8 @@ fn decode_chunk_safe(
             None => {
                 let chunk = &url_bytes[i..];
                 out_vec.extend_from_slice(chunk);
-                for &b in chunk {
-                    logger.log_orig(b);
-                    logger.log_res(b);
-                }
+                logger.log_orig_slice(chunk);
+                logger.log_res_slice(chunk);
 
                 i = len;
             }
@@ -374,7 +328,7 @@ where
                         {
                             out.clear();
                             let (valid_url, suffix) = trim_url_end(&buf[url_start_idx..len]);
-                            if decode_chunk(valid_url, out, escape_space, &mut logger) {
+                            if decode_chunk_safe(valid_url, out, escape_space, &mut logger) {
                                 has_changes = true;
                                 writer.write_all(out).context(WriteOutputSnafu)?;
                                 writer.write_all(suffix).context(WriteOutputSnafu)?;
@@ -387,16 +341,17 @@ where
 
                         #[cfg(not(feature = "safe"))]
                         {
-                            let chunk = &mut buf[url_start_idx..len];
-                            let (new_len, changed) =
-                                decode_chunk_in_place(chunk, escape_space, &mut logger);
+                            let chunk = &buf[url_start_idx..len];
+                            let changed = decode_chunk_to_writer(
+                                chunk,
+                                &mut writer,
+                                escape_space,
+                                &mut logger,
+                            )
+                            .context(WriteOutputSnafu)?;
                             if changed {
                                 has_changes = true;
                             }
-                            logger.print_if_changed(changed);
-                            writer
-                                .write_all(&chunk[..new_len])
-                                .context(WriteOutputSnafu)?;
                         }
                     } else {
                         writer
@@ -462,7 +417,7 @@ where
                             let raw_url_slice = &buf[url_start_idx..pos];
                             let (valid_url, suffix) = trim_url_end(raw_url_slice);
 
-                            if decode_chunk(valid_url, out, escape_space, &mut logger) {
+                            if decode_chunk_safe(valid_url, out, escape_space, &mut logger) {
                                 has_changes = true;
                                 writer.write_all(out).context(WriteOutputSnafu)?;
                                 writer.write_all(suffix).context(WriteOutputSnafu)?;
@@ -473,16 +428,18 @@ where
 
                         #[cfg(not(feature = "safe"))]
                         {
-                            let chunk = &mut buf[url_start_idx..pos];
-                            let (new_len, changed) =
-                                decode_chunk_in_place(chunk, escape_space, &mut logger);
+                            let chunk = &buf[url_start_idx..pos];
+                            let changed = decode_chunk_to_writer(
+                                chunk,
+                                &mut writer,
+                                escape_space,
+                                &mut logger,
+                            )
+                            .context(WriteOutputSnafu)?;
+
                             if changed {
                                 has_changes = true;
                             }
-                            logger.print_if_changed(changed);
-                            writer
-                                .write_all(&chunk[..new_len])
-                                .context(WriteOutputSnafu)?;
                         }
 
                         total_processed += (pos - url_start_idx) as u64;
@@ -510,15 +467,12 @@ where
 
                     #[cfg(not(feature = "safe"))]
                     {
-                        let (decoded_len, changed) =
-                            decode_chunk_in_place(chunk, escape_space, &mut logger);
+                        let changed =
+                            decode_chunk_to_writer(chunk, &mut writer, escape_space, &mut logger)
+                                .context(WriteOutputSnafu)?;
                         if changed {
                             has_changes = true;
                         }
-                        logger.print_if_changed(changed);
-                        writer
-                            .write_all(&chunk[..decoded_len])
-                            .context(WriteOutputSnafu)?;
                     }
 
                     #[cfg(feature = "safe")]

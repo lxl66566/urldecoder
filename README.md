@@ -53,6 +53,8 @@ Features:
 - `verbose-log`: Enables logging during decoding.
 - `safe` (default): If the decoded URL is not valid UTF-8, do not decode it.
 
+safe mode and verbose-log will copy data in memory more times.
+
 Limits:
 
 - Maximum size for a single URL is 64KB.
