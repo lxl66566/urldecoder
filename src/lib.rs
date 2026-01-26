@@ -1,5 +1,6 @@
 #![warn(clippy::cargo)]
 
+pub mod error;
 mod log;
 #[cfg(feature = "verbose-log")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,59 +8,21 @@ use std::{
     cell::UnsafeCell,
     fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
+pub use error::*;
 use memchr::memchr;
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 
 use crate::log::{DecodeLogger, NoOpLogger, VerboseLogger};
-
-// ============================================================================
-// Error Definitions (Snafu)
-// ============================================================================
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Failed to open input file {}: {}", path.display(), source))]
-    OpenInput { path: PathBuf, source: io::Error },
-
-    #[snafu(display("Failed to read input data: {}", source))]
-    ReadInput { source: io::Error },
-
-    #[snafu(display("Failed to decode: {}", source))]
-    Decode { source: io::Error },
-
-    #[snafu(display("Failed to write output data: {}", source))]
-    WriteOutput { source: io::Error },
-
-    #[snafu(display("Failed to create temporary file in {}: {}", dir.display(), source))]
-    CreateTemp { dir: PathBuf, source: io::Error },
-
-    #[snafu(display("Failed to persist temporary file to {}: {}", path.display(), source))]
-    PersistTemp {
-        path: PathBuf,
-        source: tempfile::PersistError,
-    },
-
-    #[snafu(display("Failed to write back to original file {}: {}", path.display(), source))]
-    WriteBack { path: PathBuf, source: io::Error },
-
-    #[snafu(display("Invalid UTF-8 sequence: {}", source))]
-    InvalidUtf8 { source: simdutf8::basic::Utf8Error },
-}
-
-pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-// ============================================================================
-// Constants & Lookups
-// ============================================================================
 
 const SMALL_FILE_THRESHOLD: u64 = 1024 * 1024;
 const IO_BUF_SIZE: usize = 64 * 1024;
 
 struct DecodeContext {
     io_buf: Vec<u8>,
+    #[cfg(feature = "safe")]
     out_buf: Vec<u8>,
 }
 
@@ -67,6 +30,7 @@ impl DecodeContext {
     fn new() -> Self {
         Self {
             io_buf: vec![0u8; IO_BUF_SIZE],
+            #[cfg(feature = "safe")]
             out_buf: Vec::with_capacity(IO_BUF_SIZE * 2),
         }
     }
@@ -77,6 +41,7 @@ thread_local! {
 }
 
 const URL_CHAR: [bool; 256] = gen_url_map(b"-+&@#/%?=~_|!:,.;");
+#[cfg(feature = "safe")]
 const URL_END_CHAR: [bool; 256] = gen_url_map(b"-+&@#/%=~_|");
 const HEX_MAP: [u8; 256] = gen_hex_map();
 
@@ -123,12 +88,153 @@ const fn gen_hex_map() -> [u8; 256] {
     map
 }
 
+#[inline(always)]
+fn check_url_prefix(slice: &[u8]) -> Option<usize> {
+    if slice.len() >= 7 && slice.starts_with(b"http://") {
+        Some(7)
+    } else if slice.len() >= 8 && slice.starts_with(b"https://") {
+        Some(8)
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "safe")]
+#[inline(always)]
+fn trim_url_end(slice: &[u8]) -> (&[u8], &[u8]) {
+    let mut end = slice.len();
+    while end > 0 {
+        if URL_END_CHAR[slice[end - 1] as usize] {
+            break;
+        }
+        end -= 1;
+    }
+    (&slice[..end], &slice[end..])
+}
+
 // ============================================================================
 // Core Logic
 // ============================================================================
 
+/// In-place decode, used when we don't need to worry about rolling back on
+/// UTF-8 errors (unsafe mode).
+///
+/// # Returns
+///
+/// (new_len, changed)
+#[cfg(not(feature = "safe"))]
+fn decode_chunk_in_place(
+    buf: &mut [u8],
+    escape_space: bool,
+    logger: &mut impl DecodeLogger,
+) -> (usize, bool) {
+    let len = buf.len();
+    let mut r = 0; // Read index
+    let mut w = 0; // Write index
+    let mut changed = false;
+
+    logger.clear();
+
+    while r < len {
+        let remaining = &buf[r..];
+        match memchr(b'%', remaining) {
+            Some(pos) => {
+                // Copy the non-URL-encoded part (plain text)
+                // If w != r, we need to move data. If w == r, it's already there.
+                if pos > 0 {
+                    if w != r {
+                        buf.copy_within(r..r + pos, w);
+                    }
+
+                    // Log plain text
+                    for i in 0..pos {
+                        let b = buf[r + i];
+                        logger.log_orig(b);
+                        logger.log_res(b);
+                    }
+
+                    r += pos;
+                    w += pos;
+                }
+
+                // Now buf[r] is '%'
+                if r + 2 < len {
+                    let h1 = buf[r + 1];
+                    let h2 = buf[r + 2];
+                    let v1 = HEX_MAP[h1 as usize];
+                    let v2 = HEX_MAP[h2 as usize];
+
+                    if (v1 | v2) != HEX_INVALID {
+                        let decoded_byte = (v1 << 4) | v2;
+
+                        if escape_space && decoded_byte == b' ' {
+                            buf[w] = b'%';
+                            buf[w + 1] = b'2';
+                            buf[w + 2] = b'0';
+
+                            logger.log_orig(b'%');
+                            logger.log_orig(b'2');
+                            logger.log_orig(b'0');
+                            logger.log_res(b'%');
+                            logger.log_res(b'2');
+                            logger.log_res(b'0');
+
+                            w += 3;
+                        } else {
+                            // Reduction case: %XX -> X (3 bytes -> 1 byte)
+                            buf[w] = decoded_byte;
+                            changed = true;
+
+                            logger.log_orig(b'%');
+                            logger.log_orig(h1);
+                            logger.log_orig(h2);
+                            logger.log_res(decoded_byte);
+
+                            w += 1;
+                        }
+                        r += 3;
+                    } else {
+                        // Invalid hex, keep '%'
+                        buf[w] = b'%';
+                        logger.log_orig(b'%');
+                        logger.log_res(b'%');
+                        w += 1;
+                        r += 1;
+                    }
+                } else {
+                    // Truncated at end, keep '%'
+                    buf[w] = b'%';
+                    logger.log_orig(b'%');
+                    logger.log_res(b'%');
+                    w += 1;
+                    r += 1;
+                }
+            }
+            None => {
+                // No more '%', copy remaining
+                let remaining_len = len - r;
+                if remaining_len > 0 {
+                    if w != r {
+                        buf.copy_within(r..len, w);
+                    }
+                    for i in 0..remaining_len {
+                        let b = buf[r + i];
+                        logger.log_orig(b);
+                        logger.log_res(b);
+                    }
+                    w += remaining_len;
+                    r = len;
+                }
+            }
+        }
+    }
+
+    (w, changed)
+}
+
 /// Decodes a URL slice, appends result to `out_vec`.
-fn decode_chunk(
+#[cfg(feature = "safe")]
+fn decode_chunk_safe(
     url_bytes: &[u8],
     out_vec: &mut Vec<u8>,
     escape_space: bool,
@@ -206,7 +312,6 @@ fn decode_chunk(
         }
     }
 
-    #[cfg(feature = "safe")]
     if simdutf8::basic::from_utf8(out_vec).is_err() {
         return false;
     }
@@ -217,7 +322,7 @@ fn decode_chunk(
 
 fn decode_stream_inner<R, W, L>(
     mut reader: R,
-    mut writer: W,
+    writer: W,
     escape_space: bool,
     mut logger: L,
 ) -> Result<(u64, bool)>
@@ -226,14 +331,18 @@ where
     W: Write,
     L: DecodeLogger,
 {
+    let mut writer = BufWriter::with_capacity(IO_BUF_SIZE, writer);
+
     DECODE_CTX.with(|ctx_ptr| {
         let ctx = unsafe { &mut *ctx_ptr.get() };
 
         let buf = ctx.io_buf.as_mut_slice();
+
+        #[cfg(feature = "safe")]
         let out = &mut ctx.out_buf;
 
-        let mut offset = 0; // Start of valid data in buf
-        let mut len = 0; // End of valid data in buf
+        let mut offset = 0;
+        let mut len = 0;
         let mut total_processed = 0u64;
         let mut has_changes = false;
 
@@ -241,8 +350,6 @@ where
         let mut url_start_idx: usize = 0;
 
         loop {
-            // If there is leftover data, move it to the beginning of the buffer.
-            // This is crucial for handling URLs that span across buffer reads.
             if offset > 0 && len > offset {
                 buf.copy_within(offset..len, 0);
                 len -= offset;
@@ -251,28 +358,45 @@ where
                 }
                 offset = 0;
             } else if offset == len {
-                // Buffer is fully processed
                 len = 0;
                 offset = 0;
             }
 
-            // Fill the rest of the buffer
             let n = reader.read(&mut buf[len..]).context(ReadInputSnafu)?;
             if n == 0 {
                 // EOF
                 if len > 0 {
+                    #[cfg(feature = "safe")]
                     out.clear();
-                    if in_url {
-                        // Decode the remaining part of the URL
-                        let url_slice = &buf[url_start_idx..len];
-                        let (valid_url, suffix) = trim_url_end(url_slice);
 
-                        if decode_chunk(valid_url, out, escape_space, &mut logger) {
-                            has_changes = true;
-                            writer.write_all(out).context(WriteOutputSnafu)?;
-                            writer.write_all(suffix).context(WriteOutputSnafu)?;
-                        } else {
-                            writer.write_all(url_slice).context(WriteOutputSnafu)?;
+                    if in_url {
+                        #[cfg(feature = "safe")]
+                        {
+                            out.clear();
+                            let (valid_url, suffix) = trim_url_end(&buf[url_start_idx..len]);
+                            if decode_chunk(valid_url, out, escape_space, &mut logger) {
+                                has_changes = true;
+                                writer.write_all(out).context(WriteOutputSnafu)?;
+                                writer.write_all(suffix).context(WriteOutputSnafu)?;
+                            } else {
+                                writer
+                                    .write_all(&buf[url_start_idx..len])
+                                    .context(WriteOutputSnafu)?;
+                            }
+                        }
+
+                        #[cfg(not(feature = "safe"))]
+                        {
+                            let chunk = &mut buf[url_start_idx..len];
+                            let (new_len, changed) =
+                                decode_chunk_in_place(chunk, escape_space, &mut logger);
+                            if changed {
+                                has_changes = true;
+                            }
+                            logger.print_if_changed(changed);
+                            writer
+                                .write_all(&chunk[..new_len])
+                                .context(WriteOutputSnafu)?;
                         }
                     } else {
                         writer
@@ -289,12 +413,9 @@ where
 
             while pos < len {
                 if !in_url {
-                    // Search for the next 'h'
                     match memchr(b'h', &buf[pos..len]) {
                         Some(rel_idx) => {
                             let h_idx = pos + rel_idx;
-
-                            // Write data before 'h'
                             if h_idx > offset {
                                 writer
                                     .write_all(&buf[offset..h_idx])
@@ -306,22 +427,16 @@ where
                             if let Some(prefix_len) = check_url_prefix(&buf[h_idx..len]) {
                                 in_url = true;
                                 url_start_idx = h_idx;
-                                offset = h_idx; // Mark start, don't write yet
+                                offset = h_idx;
                                 pos = h_idx + prefix_len;
+                            } else if len - h_idx < 8 {
+                                offset = h_idx;
+                                pos = len;
                             } else {
-                                // Boundary check: if we are near the end of buffer,
-                                // we might have a truncated "https://"
-                                if len - h_idx < 8 {
-                                    offset = h_idx;
-                                    pos = len; // Stop processing, wait for
-                                // next read
-                                } else {
-                                    pos = h_idx + 1;
-                                }
+                                pos = h_idx + 1;
                             }
                         }
                         None => {
-                            // No 'h' found, write everything
                             writer
                                 .write_all(&buf[offset..len])
                                 .context(WriteOutputSnafu)?;
@@ -341,66 +456,88 @@ where
                     }
 
                     if end_found {
-                        out.clear();
-                        let raw_url_slice = &buf[url_start_idx..pos];
-                        let (valid_url, suffix) = trim_url_end(raw_url_slice);
+                        #[cfg(feature = "safe")]
+                        {
+                            out.clear();
+                            let raw_url_slice = &buf[url_start_idx..pos];
+                            let (valid_url, suffix) = trim_url_end(raw_url_slice);
 
-                        // Decode to the output buffer
-                        if decode_chunk(valid_url, out, escape_space, &mut logger) {
-                            has_changes = true;
-                            writer.write_all(out).context(WriteOutputSnafu)?;
-                            writer.write_all(suffix).context(WriteOutputSnafu)?;
-                        } else {
-                            writer.write_all(raw_url_slice).context(WriteOutputSnafu)?;
+                            if decode_chunk(valid_url, out, escape_space, &mut logger) {
+                                has_changes = true;
+                                writer.write_all(out).context(WriteOutputSnafu)?;
+                                writer.write_all(suffix).context(WriteOutputSnafu)?;
+                            } else {
+                                writer.write_all(raw_url_slice).context(WriteOutputSnafu)?;
+                            }
                         }
 
-                        let processed_len = pos - url_start_idx;
-                        total_processed += processed_len as u64;
+                        #[cfg(not(feature = "safe"))]
+                        {
+                            let chunk = &mut buf[url_start_idx..pos];
+                            let (new_len, changed) =
+                                decode_chunk_in_place(chunk, escape_space, &mut logger);
+                            if changed {
+                                has_changes = true;
+                            }
+                            logger.print_if_changed(changed);
+                            writer
+                                .write_all(&chunk[..new_len])
+                                .context(WriteOutputSnafu)?;
+                        }
 
+                        total_processed += (pos - url_start_idx) as u64;
                         in_url = false;
                         offset = pos;
                     } else {
                         break;
                     }
                 }
-            } // end while pos < len
+            }
 
-            // Handle the edge case where the buffer is completely full of URL data.
-            // We must process some of it to make room, but be careful not to split '%'
-            // sequences.
             if offset == 0 && len == buf.len() {
                 if in_url {
-                    // Safe cut point calculation:
-                    // Don't cut if the end is '%', '%2', etc.
                     let mut cut_point = len;
                     if buf[len - 1] == b'%' {
                         cut_point = len - 1;
                     } else if len >= 2 && buf[len - 2] == b'%' {
                         cut_point = len - 2;
                     }
-
-                    // If the whole buffer is just "%" or "%2", force move
                     if cut_point == 0 {
                         cut_point = len;
                     }
 
-                    out.clear();
-                    let chunk = &buf[..cut_point];
-                    // Force decode chunk
-                    if decode_chunk(chunk, out, escape_space, &mut logger) {
-                        has_changes = true;
-                        writer.write_all(out).context(WriteOutputSnafu)?;
-                    } else {
-                        writer.write_all(chunk).context(WriteOutputSnafu)?;
-                    }
-                    total_processed += cut_point as u64;
+                    let chunk = &mut buf[..cut_point];
 
-                    // Set offset so `copy_within` at top of loop moves the remainder
+                    #[cfg(not(feature = "safe"))]
+                    {
+                        let (decoded_len, changed) =
+                            decode_chunk_in_place(chunk, escape_space, &mut logger);
+                        if changed {
+                            has_changes = true;
+                        }
+                        logger.print_if_changed(changed);
+                        writer
+                            .write_all(&chunk[..decoded_len])
+                            .context(WriteOutputSnafu)?;
+                    }
+
+                    #[cfg(feature = "safe")]
+                    {
+                        out.clear();
+                        // Using immutable borrow for safe logic
+                        let chunk_imm = &chunk;
+                        if decode_chunk_safe(chunk_imm, out, escape_space, &mut logger) {
+                            has_changes = true;
+                            writer.write_all(out).context(WriteOutputSnafu)?;
+                        } else {
+                            writer.write_all(chunk_imm).context(WriteOutputSnafu)?;
+                        }
+                    }
+
+                    total_processed += cut_point as u64;
                     offset = cut_point;
-                    // url_start_idx logic: The next chunk continues the URL from index 0
                     url_start_idx = 0;
                 } else {
-                    // Not in URL
                     writer.write_all(&buf[..len]).context(WriteOutputSnafu)?;
                     total_processed += len as u64;
                     len = 0;
@@ -409,6 +546,7 @@ where
             }
         }
 
+        writer.flush().context(WriteOutputSnafu)?;
         Ok((total_processed, has_changes))
     })
 }
@@ -444,29 +582,6 @@ where
     }
 }
 
-#[inline(always)]
-fn check_url_prefix(slice: &[u8]) -> Option<usize> {
-    if slice.len() >= 7 && slice.starts_with(b"http://") {
-        Some(7)
-    } else if slice.len() >= 8 && slice.starts_with(b"https://") {
-        Some(8)
-    } else {
-        None
-    }
-}
-
-#[inline(always)]
-fn trim_url_end(slice: &[u8]) -> (&[u8], &[u8]) {
-    let mut end = slice.len();
-    while end > 0 {
-        if URL_END_CHAR[slice[end - 1] as usize] {
-            break;
-        }
-        end -= 1;
-    }
-    (&slice[..end], &slice[end..])
-}
-
 /// Decodes a string, returns the decoded string and whether the decode
 /// happened.
 ///
@@ -482,8 +597,7 @@ fn trim_url_end(slice: &[u8]) -> (&[u8], &[u8]) {
 pub fn decode_str(input: &str, escape_space: bool, verbose: bool) -> Result<(String, bool)> {
     let mut buf = Vec::new();
     let changed = {
-        let mut writer = io::BufWriter::new(&mut buf);
-        let (_, changed) = decode_stream(input.as_bytes(), &mut writer, escape_space, verbose)?;
+        let (_, changed) = decode_stream(input.as_bytes(), &mut buf, escape_space, verbose)?;
         changed
     };
     Ok((
@@ -539,16 +653,10 @@ pub fn decode_file(
             .tempfile_in(parent)
             .context(CreateTempSnafu { dir: parent })?;
 
-        // Ignore permission errors silently or log them, but don't fail the whole
-        // process
+        // Ignore permission errors silently
         let _ = temp_file.as_file().set_permissions(metadata.permissions());
 
-        let res = {
-            let mut writer = BufWriter::new(&mut temp_file);
-            let res = decode_stream(reader, &mut writer, escape_space, verbose)?;
-            writer.flush().context(WriteOutputSnafu)?;
-            res
-        };
+        let res = decode_stream(reader, &mut temp_file, escape_space, verbose)?;
 
         if res.1 {
             temp_file.persist(path).context(PersistTempSnafu { path })?;

@@ -35,7 +35,7 @@ verbose-log = []
 # if decoded url is not valid utf-8, do not decode
 safe = []
 # default features
-default = ["safe"]
+default = []
 
 [profile.release]
 lto       = true
