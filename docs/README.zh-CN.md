@@ -53,9 +53,7 @@ features:
 - `verbose-log`: 启用解码过程中的日志输出
 - `safe` (default): 如果 url 解码后不是有效的 utf-8 字符串，则跳过解码
 
-其他：
-
-- 单条 URL 不能超过 64KB。
+safe 和 verbose-log 会进行更多次 buffer 拷贝。
 
 ## benchmark
 

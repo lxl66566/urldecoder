@@ -183,11 +183,25 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(t1).unwrap(),
-            decode_str(test_str, false, false).unwrap().0
+            decode_str(
+                test_str,
+                false,
+                #[cfg(feature = "verbose-log")]
+                false
+            )
+            .unwrap()
+            .0
         );
         assert_eq!(
             fs::read_to_string(t2).unwrap(),
-            decode_str(test_str, false, false).unwrap().0
+            decode_str(
+                test_str,
+                false,
+                #[cfg(feature = "verbose-log")]
+                false
+            )
+            .unwrap()
+            .0
         );
         assert_eq!(fs::read_to_string(t3).unwrap(), test_str);
     }

@@ -1,46 +1,12 @@
 use std::{
-    cmp::min,
     hint::black_box,
-    io::{self, Read},
+    io::{self},
 };
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use urldecoder::decode_stream;
-struct CycleReader {
-    data: Vec<u8>,
-    pos: usize,
-}
-
-impl CycleReader {
-    fn new(data: Vec<u8>) -> Self {
-        Self { data, pos: 0 }
-    }
-}
-
-impl Read for CycleReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let buf_len = buf.len();
-        let data_len = self.data.len();
-        let mut written = 0;
-
-        while written < buf_len {
-            let remain_in_data = data_len - self.pos;
-            let remain_in_buf = buf_len - written;
-
-            let to_copy = min(remain_in_data, remain_in_buf);
-            buf[written..written + to_copy]
-                .copy_from_slice(&self.data[self.pos..self.pos + to_copy]);
-
-            written += to_copy;
-            self.pos += to_copy;
-
-            if self.pos >= data_len {
-                self.pos = 0;
-            }
-        }
-        Ok(written)
-    }
-}
+use urldecoder::decode_slice_to_writer;
+#[cfg(feature = "verbose-log")]
+use urldecoder::log::NoOpLogger;
 
 fn generate_mixed_data() -> Vec<u8> {
     let url = "https://2.com/1?q=%E5%A4%A9%E6%B0%94";
@@ -70,21 +36,39 @@ fn bench_decode_throughput(c: &mut Criterion) {
 
     const STREAM_SIZE: u64 = 128 * 1024 * 1024;
 
-    let mut group = c.benchmark_group("decode_throughput");
+    let mut full_data = Vec::with_capacity(STREAM_SIZE as usize);
+    while full_data.len() < STREAM_SIZE as usize {
+        let remain = (STREAM_SIZE as usize) - full_data.len();
+        let to_copy = remain.min(pattern_data.len());
+        full_data.extend_from_slice(&pattern_data[..to_copy]);
+    }
 
+    let mut group = c.benchmark_group("decode_throughput");
     group.throughput(Throughput::Bytes(STREAM_SIZE));
-    group.bench_function("stream_90_text_10_url", |b| {
+
+    group.bench_function("slice_90_text_10_url", |b| {
         b.iter(|| {
-            let infinite_reader = CycleReader::new(pattern_data.clone());
-            let limited_reader = infinite_reader.take(STREAM_SIZE);
             let mut sink = io::sink();
-            let _ = decode_stream(
-                black_box(limited_reader),
-                black_box(&mut sink),
-                black_box(false),
-                black_box(false),
-            )
-            .unwrap();
+            #[cfg(feature = "verbose-log")]
+            {
+                let mut logger = NoOpLogger;
+                let _ = decode_slice_to_writer(
+                    black_box(&full_data),
+                    black_box(&mut sink),
+                    black_box(true),
+                    black_box(&mut logger),
+                )
+                .unwrap();
+            }
+            #[cfg(not(feature = "verbose-log"))]
+            {
+                let _ = decode_slice_to_writer(
+                    black_box(&full_data),
+                    black_box(&mut sink),
+                    black_box(true),
+                )
+                .unwrap();
+            }
         })
     });
 

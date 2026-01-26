@@ -19,9 +19,10 @@ version       = "2.0.0"
 clap     = { version = "4.5", features = ["derive"], optional = true }
 glob     = { version = "0.3", optional = true }
 memchr   = "2"
+memmap2  = "0.9.10"
 rayon    = { version = "1", optional = true }
 simdutf8 = "0.1.5"
-snafu    = "0.8"
+snafu    = "0.9"
 tempfile = "3.8"
 
 [dev-dependencies]
@@ -38,10 +39,11 @@ safe = []
 default = ["safe"]
 
 [profile.release]
-lto       = true
-opt-level = "z"
-panic     = "abort"
-strip     = true
+codegen-units = 1
+lto           = true
+opt-level     = 3
+panic         = "abort"
+strip         = true
 
 [lib]
 name = "urldecoder"
