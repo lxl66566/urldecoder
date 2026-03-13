@@ -2,9 +2,9 @@
 
 English | [简体中文](./docs/README.zh-CN.md)
 
-CLI tool and Rust library for batch URL decoding. Blazing fast.
+A CLI tool for batch finding and decoding URLs in text/files, also usable as a Rust library. Highly performance-optimized.
 
-Decoding shortens string length and improves readability, especially in blogs, posts and documents. For example:
+Decoding can shorten string length and improve source code readability, making it ideal for use in blogs, articles, and documentation. For example:
 
 ```diff
 - https://github.com/lxl66566/my-college-files/tree/main/%E4%BF%A1%E6%81%AF%E7%A7%91%E5%AD%A6%E4%B8%8E%E5%B7%A5%E7%A8%8B%E5%AD%A6%E9%99%A2/%E5%B5%8C%E5%85%A5%E5%BC%8F%E7%B3%BB%E7%BB%9F
@@ -13,31 +13,33 @@ Decoding shortens string length and improves readability, especially in blogs, p
 
 ## Usage
 
-### CLI
+### Command Line
+
+You can download the corresponding executable for your platform from the [Releases](https://github.com/lxl66566/urldecoder/releases) page.
 
 ```sh
-Usage: urldecoder.exe [OPTIONS] <FILES>...
+Usage: urldecoder [OPTIONS] <FILES>...
 
 Arguments:
-  <FILES>...  Files to process, allows wildcard pattern
+  <FILES>...  Input files, supports wildcard globbing
 
 Options:
-  -d, --dry-run            Show result only, without overwrite
-  -n, --no-output          Do not print decode result to console
-  -e, --exclude <EXCLUDE>  Exclude file or folder by relative path prefix
-      --escape-space       Do not decode `%20` to space
+  -d, --dry-run            Only simulate the operation, do not modify files
+  -n, --no-output          Do not print decoded results to the console
+  -e, --exclude <EXCLUDE>  Exclude files or directories; prefix matching on relative paths, does not support wildcards
+      --escape-space       Do not decode `%20` into spaces; Markdown-friendly
   -h, --help               Print help
   -V, --version            Print version
 
 Examples:
 urldecoder test/t.md        # Decode test/t.md
-urldecoder *.md -e my.md    # Decode all .md files, excluding my.md
-urldecoder **/*             # Decode all files recursively
+urldecoder *.md -e my.md    # Decode all `.md` files in the current directory, except `my.md`
+urldecoder **/*             # Decode all files in the current directory and its subdirectories
 ```
 
-The `node_modules` folder is excluded by default.
+By default, the `node_modules` folder is excluded.
 
-A real-world usage example:
+My typical usage:
 
 ```sh
 urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist --escape-space 'src/**/*.md' 'src/.vuepress/components/*' 'src/.vuepress/data/*'
@@ -45,34 +47,42 @@ urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist 
 
 ### Rust Library
 
-Visit [docs.rs](https://docs.rs/urldecoder) for documentation.
+See the documentation at [docs.rs](https://docs.rs/urldecoder).
 
 Features:
 
-- `bin`: For CLI compilation; enables rayon parallel decoding + glob matching.
-- `verbose-log`: Enables logging during decoding.
-- `safe` (default): If the decoded URL is not valid UTF-8, do not decode it.
-
-safe mode and verbose-log will copy data in memory more times.
+- `bin`: Used for compiling the CLI; enables Rayon parallel decoding + glob file matching.
+- `verbose-log`: Enables verbose logging during decoding; may increase buffer copy operations.
+- `safe` (default): Atomically writes file contents to ensure file integrity.
 
 ## Benchmark
 
-Environment: Ryzen 7950x, NixOS
-Content: 90% ASCII text + 10% URL strings
+Test environment: Ryzen 7950x, NixOS
 
-### Single Thread
+String/text content: 90% ordinary ASCII text + 10% URL-encoded strings.
 
-Pure in-memory URL decoding test.
+<!-- prettier-ignore -->
+| Use Case                                      | unsafe   | safe     |
+|-----------------------------------------------|----------|----------|
+| Single-threaded (std::io::sink)                | 9.4580 GiB/s | -        |
+| Single-threaded (In place)                     | 7.8869 GiB/s | -        |
+| Single-file 32KB decode (dry run, read only)   | 3.6502 GiB/s | -        |
+| Single-file 32KB decode (RW, tmpfs)            | 1.4765 GiB/s | 1.1970 GiB/s |
+| Single-file 10MB decode (dry run, read only)   | 6.5856 GiB/s | -        |
+| Single-file 10MB decode (RW, tmpfs)            | 5.6262 GiB/s | 2.0759 GiB/s |
+| Parallel 32KB files decode (dry run, read only)| 22.966 GiB/s | -        |
+| Parallel 32KB files decode (RW, tmpfs)         | 26.184 GiB/s | 24.524 GiB/s |
+| Parallel 4MB files decode (dry run, read only) | 24.784 GiB/s | -        |
+| Parallel 4MB files decode (RW, tmpfs)          | 20.890 GiB/s | 11.308 GiB/s |
 
-`cargo bench --bench single_thread --no-default-features`
+```sh
+cargo bench --bench single_thread --no-default-features
+cargo bench --bench single_file --no-default-features
+cargo bench --bench multi_files --no-default-features -F bin
+```
 
-Result: **3.2944 GiB/s**
+## Fuzz
 
-### Parallel File Decoding
-
-Multi-threaded file decoding test on tmpfs.
-
-`cargo bench --bench multi_files --no-default-features -F bin`
-
-- 900KB files: **26.370 GiB/s**
-- 10MB files: **33.432 GiB/s**
+```sh
+cargo fuzz run fuzz_target_unsafe --no-default-features -- -max_len=131072 -jobs=32
+```

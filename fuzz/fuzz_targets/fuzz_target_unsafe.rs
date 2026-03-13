@@ -66,7 +66,7 @@ pub fn decode_url_strict(code: &str, escape_space: bool) -> Result<(String, bool
 }
 
 fn test_scenario(input_str: &str, escape_space: bool) {
-    let my_res = decode_str(input_str, escape_space, false);
+    let my_res = decode_str(input_str, escape_space);
     let ref_res = decode_url_strict(input_str, escape_space);
 
     match (ref_res, my_res) {

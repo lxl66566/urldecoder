@@ -23,6 +23,8 @@ const SMALL_FILE_THRESHOLD: u64 = 256 * 1024;
 const IO_BUF_SIZE: usize = 64 * 1024;
 const URL_CHAR_BITMAP: [u32; 8] = gen_url_bitmap(b"-+&@#/%?=~_|!:,.;");
 const URL_END_CHAR_BITMAP: [u32; 8] = gen_url_bitmap(b"-+&@#/%=~_|");
+const HEX_MAP: [u8; 256] = gen_hex_map();
+const HEX_INVALID: u8 = 0xFF;
 
 const fn gen_url_bitmap(symbols: &[u8]) -> [u32; 8] {
     let mut bitmap = [0u32; 8];
@@ -53,20 +55,43 @@ const fn gen_url_bitmap(symbols: &[u8]) -> [u32; 8] {
     bitmap
 }
 
-/// SWAR
+const fn gen_hex_map() -> [u8; 256] {
+    let mut map = [HEX_INVALID; 256];
+    let mut i = 0;
+    while i < 10 {
+        map[(b'0' + i) as usize] = i;
+        i += 1;
+    }
+    let mut i = 0;
+    while i < 6 {
+        map[(b'a' + i) as usize] = 10 + i;
+        map[(b'A' + i) as usize] = 10 + i;
+        i += 1;
+    }
+    map
+}
+
+#[inline]
+#[cold]
+fn cold() {}
+
+#[inline]
+fn likely(b: bool) -> bool {
+    if !b {
+        cold()
+    }
+    b
+}
+
 #[inline(always)]
-fn decode_hex_pair(h1: u8, h2: u8) -> u8 {
-    let word = u16::from_le_bytes([h1, h2]);
-    // '0'-'9' (0x30-0x39) -> 0-9
-    // 'A'-'F' (0x41-0x46) -> 1-6
-    // 'a'-'f' (0x61-0x66) -> 1-6
-    let lower = word & 0x0F0F;
-    // ('A'-'F' / 'a'-'f')
-    let is_letter = (word & 0x4040) >> 6;
-    // + 9 if is_letter
-    let nibbles = lower + is_letter * 9;
-    let decoded = ((nibbles & 0xFF) << 4) | (nibbles >> 8);
-    decoded as u8
+fn decode_hex_pair(h1: u8, h2: u8) -> Option<u8> {
+    let v1 = unsafe { *HEX_MAP.get_unchecked(h1 as usize) };
+    let v2 = unsafe { *HEX_MAP.get_unchecked(h2 as usize) };
+    if likely((v1 | v2) != HEX_INVALID) {
+        Some((v1 << 4) | v2)
+    } else {
+        None
+    }
 }
 
 #[inline(always)]
@@ -282,33 +307,37 @@ fn decode_url_in_place_indices<const ESCAPE_SPACE: bool>(
         if data[i] == b'%' && i + 2 < src_end {
             let h1 = data[i + 1];
             let h2 = data[i + 2];
-            let decoded = decode_hex_pair(h1, h2);
-            if ESCAPE_SPACE && decoded == b' ' {
+            if let Some(decoded) = decode_hex_pair(h1, h2) {
+                if ESCAPE_SPACE && decoded == b' ' {
+                    i += 3;
+                    continue;
+                }
+
+                changed = true;
+                if i > literal_start {
+                    let len = i - literal_start;
+                    logger.log_orig_slice(&data[literal_start..i]);
+                    logger.log_res_slice(&data[literal_start..i]);
+                    if dst != literal_start {
+                        data.copy_within(literal_start..i, dst);
+                    }
+                    dst += len;
+                }
+
+                logger.log_orig(b'%');
+                logger.log_orig(h1);
+                logger.log_orig(h2);
+                logger.log_res(decoded);
+
+                data[dst] = decoded;
+                dst += 1;
                 i += 3;
+                literal_start = i;
+                continue;
+            } else {
+                i += 1;
                 continue;
             }
-
-            changed = true;
-            if i > literal_start {
-                let len = i - literal_start;
-                logger.log_orig_slice(&data[literal_start..i]);
-                logger.log_res_slice(&data[literal_start..i]);
-                if dst != literal_start {
-                    data.copy_within(literal_start..i, dst);
-                }
-                dst += len;
-            }
-
-            logger.log_orig(b'%');
-            logger.log_orig(h1);
-            logger.log_orig(h2);
-            logger.log_res(decoded);
-
-            data[dst] = decoded;
-            dst += 1;
-            i += 3;
-            literal_start = i;
-            continue;
         }
         if data[i] == b'%' {
             i += 1;
@@ -528,27 +557,31 @@ fn decode_inner<const ESCAPE_SPACE: bool, W: Write>(
         if url[i] == b'%' && i + 2 < len {
             let h1 = url[i + 1];
             let h2 = url[i + 2];
-            let decoded = decode_hex_pair(h1, h2);
-            if ESCAPE_SPACE && decoded == b' ' {
+            if let Some(decoded) = decode_hex_pair(h1, h2) {
+                if ESCAPE_SPACE && decoded == b' ' {
+                    i += 3;
+                    continue;
+                }
+
+                changed = true;
+                if i > literal_start {
+                    writer.write_all(&url[literal_start..i])?;
+                    logger.log_orig_slice(&url[literal_start..i]);
+                    logger.log_res_slice(&url[literal_start..i]);
+                }
+                writer.write_all(&[decoded])?;
+                logger.log_orig(b'%');
+                logger.log_orig(h1);
+                logger.log_orig(h2);
+                logger.log_res(decoded);
+
                 i += 3;
+                literal_start = i;
+                continue;
+            } else {
+                i += 1;
                 continue;
             }
-
-            changed = true;
-            if i > literal_start {
-                writer.write_all(&url[literal_start..i])?;
-                logger.log_orig_slice(&url[literal_start..i]);
-                logger.log_res_slice(&url[literal_start..i]);
-            }
-            writer.write_all(&[decoded])?;
-            logger.log_orig(b'%');
-            logger.log_orig(h1);
-            logger.log_orig(h2);
-            logger.log_res(decoded);
-
-            i += 3;
-            literal_start = i;
-            continue;
         }
         if url[i] == b'%' {
             i += 1;
@@ -577,13 +610,13 @@ pub fn decode_str(
 ) -> Result<(String, bool)> {
     #[cfg(not(feature = "verbose-log"))]
     let verbose = false;
+    let mut buf = Vec::with_capacity(input.len());
 
-    let mut buf = input.as_bytes().to_vec();
-
-    let new_len = decode!(decode_in_place(&mut buf, escape_space), verbose);
-
-    let changed = new_len < buf.len();
-    buf.truncate(new_len);
+    let changed = decode!(
+        decode_slice_to_writer(input.as_bytes(), &mut buf, escape_space),
+        verbose
+    )
+    .context(WriteOutputSnafu)?;
 
     Ok((
         simdutf8::basic::from_utf8(&buf)
@@ -719,20 +752,6 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
-
-    #[test]
-    fn test_decode_hex_pair() {
-        let hex_chars: Vec<u8> = b"0123456789ABCDEFabcdef".to_vec();
-        for &c1 in &hex_chars {
-            for &c2 in &hex_chars {
-                let tmp = [c1, c2];
-                let s = std::str::from_utf8(&tmp).unwrap();
-                let expected = u8::from_str_radix(s, 16).unwrap();
-                let actual = decode_hex_pair(c1, c2);
-                assert_eq!(actual, expected);
-            }
-        }
-    }
 
     #[test]
     fn test_basic() {

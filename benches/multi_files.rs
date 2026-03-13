@@ -40,8 +40,8 @@ fn generate_mixed_data() -> Vec<u8> {
 fn prepare_test_env() -> (TempDir, Vec<PathBuf>, u64) {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let file_count = 32;
-    let min_file_size = 10 * 1024 * 1024; // 10MB
-    // let min_file_size = 900 * 1024; // 900KB
+    // let min_file_size = 4 * 1024 * 1024; // 4 MB
+    let min_file_size = 32 * 1024; // 32 KB
 
     let pattern = generate_mixed_data();
 
@@ -73,6 +73,9 @@ fn bench_decode_throughput(c: &mut Criterion) {
 
     group.throughput(Throughput::Bytes(total_bytes));
 
+    // 4 MB
+    // unsafe: 24.784 GiB/s
+    // safe: 24.447 GiB/s
     group.bench_function("rayon_decode_dry_run", |b| {
         b.iter(|| {
             let escape_space = false;
@@ -93,7 +96,35 @@ fn bench_decode_throughput(c: &mut Criterion) {
                     #[cfg(feature = "verbose-log")]
                     &changed_count,
                 )
-                .unwrap();
+                .unwrap()
+            })
+        })
+    });
+
+    // 4 MB
+    // unsafe: 20.890 GiB/s
+    // safe: 11.308 GiB/s
+    group.bench_function("rayon_decode", |b| {
+        b.iter(|| {
+            let escape_space = false;
+            let dry_run = false;
+            #[cfg(feature = "verbose-log")]
+            let processed_count = AtomicUsize::new(0);
+            #[cfg(feature = "verbose-log")]
+            let changed_count = AtomicUsize::new(0);
+            paths.par_iter().for_each(|path| {
+                decode_file(
+                    path,
+                    escape_space,
+                    dry_run,
+                    #[cfg(feature = "verbose-log")]
+                    false,
+                    #[cfg(feature = "verbose-log")]
+                    &processed_count,
+                    #[cfg(feature = "verbose-log")]
+                    &changed_count,
+                )
+                .unwrap()
             })
         })
     });

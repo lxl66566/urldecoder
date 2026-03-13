@@ -59,6 +59,10 @@ harness = false
 name    = "single_thread"
 
 [[bench]]
+harness = false
+name    = "single_file"
+
+[[bench]]
 harness           = false
 name              = "multi_files"
 required-features = ["bin"]
