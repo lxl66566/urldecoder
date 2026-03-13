@@ -24,8 +24,6 @@ const SMALL_FILE_THRESHOLD: u64 = 256 * 1024;
 const IO_BUF_SIZE: usize = 64 * 1024;
 const URL_CHAR_BITMAP: [u32; 8] = gen_url_bitmap(b"-+&@#/%?=~_|!:,.;");
 const URL_END_CHAR_BITMAP: [u32; 8] = gen_url_bitmap(b"-+&@#/%=~_|");
-const HEX_MAP: [u8; 256] = gen_hex_map();
-const HEX_INVALID: u8 = 0xFF;
 
 const fn gen_url_bitmap(symbols: &[u8]) -> [u32; 8] {
     let mut bitmap = [0u32; 8];
@@ -56,20 +54,20 @@ const fn gen_url_bitmap(symbols: &[u8]) -> [u32; 8] {
     bitmap
 }
 
-const fn gen_hex_map() -> [u8; 256] {
-    let mut map = [HEX_INVALID; 256];
-    let mut i = 0;
-    while i < 10 {
-        map[(b'0' + i) as usize] = i;
-        i += 1;
-    }
-    let mut i = 0;
-    while i < 6 {
-        map[(b'a' + i) as usize] = 10 + i;
-        map[(b'A' + i) as usize] = 10 + i;
-        i += 1;
-    }
-    map
+/// SWAR
+#[inline(always)]
+fn decode_hex_pair(h1: u8, h2: u8) -> u8 {
+    let word = u16::from_le_bytes([h1, h2]);
+    // '0'-'9' (0x30-0x39) -> 0-9
+    // 'A'-'F' (0x41-0x46) -> 1-6
+    // 'a'-'f' (0x61-0x66) -> 1-6
+    let lower = word & 0x0F0F;
+    // ('A'-'F' / 'a'-'f')
+    let is_letter = (word & 0x4040) >> 6;
+    // + 9 if is_letter
+    let nibbles = lower + is_letter * 9;
+    let decoded = ((nibbles & 0xFF) << 4) | (nibbles >> 8);
+    decoded as u8
 }
 
 #[inline(always)]
@@ -82,18 +80,6 @@ fn is_url_char(byte: u8) -> bool {
 fn is_url_end_char(byte: u8) -> bool {
     let idx = byte as usize;
     unsafe { (URL_END_CHAR_BITMAP.get_unchecked(idx >> 5) >> (idx & 31)) & 1 == 1 }
-}
-
-#[inline]
-#[cold]
-fn cold() {}
-
-#[inline]
-fn likely(b: bool) -> bool {
-    if !b {
-        cold()
-    }
-    b
 }
 
 #[inline(always)]
@@ -192,6 +178,30 @@ pub fn decode_url_to_writer<W: Write>(
     escape_space: bool,
     #[cfg(feature = "verbose-log")] logger: &mut impl DecodeLogger,
 ) -> io::Result<bool> {
+    // static dispatch: completely remove `escape_space` branch at compile time
+    if escape_space {
+        decode_inner::<true, W>(
+            url,
+            writer,
+            #[cfg(feature = "verbose-log")]
+            logger,
+        )
+    } else {
+        decode_inner::<false, W>(
+            url,
+            writer,
+            #[cfg(feature = "verbose-log")]
+            logger,
+        )
+    }
+}
+
+#[inline(always)]
+fn decode_inner<const ESCAPE_SPACE: bool, W: Write>(
+    url: &[u8],
+    writer: &mut W,
+    #[cfg(feature = "verbose-log")] logger: &mut impl DecodeLogger,
+) -> io::Result<bool> {
     #[cfg(not(feature = "verbose-log"))]
     let mut logger = NoOpLogger;
     logger.clear();
@@ -215,38 +225,47 @@ pub fn decode_url_to_writer<W: Write>(
     let mut i = first_pct;
     let len = url.len();
     let mut changed = false;
+    let mut literal_start = i; // for batch write
 
     while i < len {
         if url[i] == b'%' && i + 2 < len {
             let h1 = url[i + 1];
             let h2 = url[i + 2];
-
-            let v1 = unsafe { *HEX_MAP.get_unchecked(h1 as usize) };
-            let v2 = unsafe { *HEX_MAP.get_unchecked(h2 as usize) };
-
-            if likely((v1 | v2) != HEX_INVALID) {
-                let decoded = (v1 << 4) | v2;
-                if decoded == b' ' && escape_space {
-                    writer.write_all(b"%20")?;
-                    logger.log_orig_slice(b"%20");
-                    logger.log_res_slice(b"%20");
-                } else {
-                    writer.write_all(&[decoded])?;
-                    changed = true;
-                    logger.log_orig(b'%');
-                    logger.log_orig(h1);
-                    logger.log_orig(h2);
-                    logger.log_res(decoded);
-                }
+            let decoded = decode_hex_pair(h1, h2);
+            if ESCAPE_SPACE && decoded == b' ' {
                 i += 3;
                 continue;
             }
-        }
 
-        writer.write_all(&[url[i]])?;
-        logger.log_orig(url[i]);
-        logger.log_res(url[i]);
-        i += 1;
+            changed = true;
+            if i > literal_start {
+                writer.write_all(&url[literal_start..i])?;
+                logger.log_orig_slice(&url[literal_start..i]);
+                logger.log_res_slice(&url[literal_start..i]);
+            }
+            writer.write_all(&[decoded])?;
+            logger.log_orig(b'%');
+            logger.log_orig(h1);
+            logger.log_orig(h2);
+            logger.log_res(decoded);
+
+            i += 3;
+            literal_start = i;
+            continue;
+        }
+        if url[i] == b'%' {
+            i += 1;
+        } else {
+            match memchr(b'%', &url[i..]) {
+                Some(offset) => i += offset,
+                None => i = len,
+            }
+        }
+    }
+    if literal_start < len {
+        writer.write_all(&url[literal_start..len])?;
+        logger.log_orig_slice(&url[literal_start..len]);
+        logger.log_res_slice(&url[literal_start..len]);
     }
 
     logger.print_if_changed(changed);
@@ -394,6 +413,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_decode_hex_pair() {
+        let hex_chars: Vec<u8> = b"0123456789ABCDEFabcdef".to_vec();
+        for &c1 in &hex_chars {
+            for &c2 in &hex_chars {
+                let tmp = [c1, c2];
+                let s = std::str::from_utf8(&tmp).unwrap();
+                let expected = u8::from_str_radix(s, 16).unwrap();
+                let actual = decode_hex_pair(c1, c2);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
     fn test_basic() {
         // basic
         assert_eq!(
@@ -484,7 +517,7 @@ mod tests {
     fn test_decode_file() {
         let temp = NamedTempFile::new().unwrap();
         let t1 = temp.path().to_path_buf();
-        let test_str = "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94";
+        let test_str = "xxxxhttps://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94xxxx";
         fs::write(&t1, test_str).unwrap();
 
         decode_file(
@@ -502,7 +535,7 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(t1).unwrap(),
-            "https://www.baidu.com/s?ie=UTF-8&wd=天气"
+            "xxxxhttps://www.baidu.com/s?ie=UTF-8&wd=天气xxxx"
         );
     }
 }

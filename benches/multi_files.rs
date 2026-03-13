@@ -94,7 +94,7 @@ fn bench_decode_throughput(c: &mut Criterion) {
                     &changed_count,
                 )
                 .unwrap();
-            });
+            })
         })
     });
 

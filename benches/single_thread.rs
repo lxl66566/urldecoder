@@ -52,22 +52,18 @@ fn bench_decode_throughput(c: &mut Criterion) {
             #[cfg(feature = "verbose-log")]
             {
                 let mut logger = NoOpLogger;
-                let _ = decode_slice_to_writer(
+                decode_slice_to_writer(
                     black_box(&full_data),
                     black_box(&mut sink),
                     black_box(true),
                     black_box(&mut logger),
                 )
-                .unwrap();
+                .unwrap()
             }
             #[cfg(not(feature = "verbose-log"))]
             {
-                let _ = decode_slice_to_writer(
-                    black_box(&full_data),
-                    black_box(&mut sink),
-                    black_box(true),
-                )
-                .unwrap();
+                decode_slice_to_writer(black_box(&full_data), black_box(&mut sink), black_box(true))
+                    .unwrap()
             }
         })
     });
