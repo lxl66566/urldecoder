@@ -8,6 +8,8 @@ use urldecoder::decode_slice_to_writer;
 #[cfg(feature = "verbose-log")]
 use urldecoder::log::NoOpLogger;
 
+const STREAM_SIZE: u64 = 128 * 1024 * 1024;
+
 fn generate_mixed_data() -> Vec<u8> {
     let url = "https://2.com/1?q=%E5%A4%A9%E6%B0%94";
     let url_len = url.len();
@@ -31,10 +33,8 @@ fn generate_mixed_data() -> Vec<u8> {
     pattern.into_bytes()
 }
 
-fn bench_decode_throughput(c: &mut Criterion) {
+fn generate_full_data() -> Vec<u8> {
     let pattern_data = generate_mixed_data();
-
-    const STREAM_SIZE: u64 = 128 * 1024 * 1024;
 
     let mut full_data = Vec::with_capacity(STREAM_SIZE as usize);
     while full_data.len() < STREAM_SIZE as usize {
@@ -42,13 +42,18 @@ fn bench_decode_throughput(c: &mut Criterion) {
         let to_copy = remain.min(pattern_data.len());
         full_data.extend_from_slice(&pattern_data[..to_copy]);
     }
+    full_data
+}
 
-    let mut group = c.benchmark_group("decode_throughput");
+fn bench_decode(c: &mut Criterion) {
+    let full_data = generate_full_data();
+
+    let mut group = c.benchmark_group("decode_slice");
     group.throughput(Throughput::Bytes(STREAM_SIZE));
-
-    group.bench_function("slice_90_text_10_url", |b| {
+    group.bench_function("slice_to_sink", |b| {
         b.iter(|| {
             let mut sink = io::sink();
+
             #[cfg(feature = "verbose-log")]
             {
                 let mut logger = NoOpLogger;
@@ -56,6 +61,7 @@ fn bench_decode_throughput(c: &mut Criterion) {
                     black_box(&full_data),
                     black_box(&mut sink),
                     black_box(true),
+                    #[cfg(feature = "verbose-log")]
                     black_box(&mut logger),
                 )
                 .unwrap()
@@ -71,5 +77,5 @@ fn bench_decode_throughput(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_decode_throughput);
+criterion_group!(benches, bench_decode);
 criterion_main!(benches);
