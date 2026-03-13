@@ -1,9 +1,6 @@
-use std::{
-    hint::black_box,
-    io::{self},
-};
+use std::{hint::black_box, io};
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use urldecoder::decode_slice_to_writer;
 #[cfg(feature = "verbose-log")]
 use urldecoder::log::NoOpLogger;
@@ -72,6 +69,50 @@ fn bench_decode(c: &mut Criterion) {
                     .unwrap()
             }
         })
+    });
+    group.bench_function("slice_to_vec", |b| {
+        b.iter_batched_ref(
+            || Vec::with_capacity(STREAM_SIZE as usize),
+            |out| {
+                #[cfg(feature = "verbose-log")]
+                {
+                    let mut logger = NoOpLogger;
+                    decode_slice_to_writer(
+                        black_box(&full_data),
+                        black_box(out),
+                        black_box(true),
+                        #[cfg(feature = "verbose-log")]
+                        black_box(&mut logger),
+                    )
+                    .unwrap()
+                }
+                #[cfg(not(feature = "verbose-log"))]
+                {
+                    decode_slice_to_writer(black_box(&full_data), black_box(out), black_box(true))
+                        .unwrap()
+                }
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    group.bench_function("decode_in_place", |b| {
+        b.iter_batched_ref(
+            || full_data.clone(),
+            |full_data| {
+                #[cfg(feature = "verbose-log")]
+                {
+                    let mut logger = VerboseLogger::new();
+                    decode_in_place(black_box(&mut full_data), black_box(true), &mut logger)
+                }
+                #[cfg(not(feature = "verbose-log"))]
+                {
+                    use urldecoder::decode_in_place;
+
+                    decode_in_place(black_box(full_data), black_box(true))
+                }
+            },
+            BatchSize::SmallInput,
+        )
     });
 
     group.finish();

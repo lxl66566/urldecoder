@@ -577,13 +577,13 @@ pub fn decode_str(
 ) -> Result<(String, bool)> {
     #[cfg(not(feature = "verbose-log"))]
     let verbose = false;
+    let mut buf = Vec::with_capacity(input.len());
 
-    let mut buf = input.as_bytes().to_vec();
-
-    let new_len = decode!(decode_in_place(&mut buf, escape_space), verbose);
-
-    let changed = new_len < buf.len();
-    buf.truncate(new_len);
+    let changed = decode!(
+        decode_slice_to_writer(input.as_bytes(), &mut buf, escape_space),
+        verbose
+    )
+    .context(WriteOutputSnafu)?;
 
     Ok((
         simdutf8::basic::from_utf8(&buf)

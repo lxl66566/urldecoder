@@ -72,7 +72,7 @@ Result: **3.2944 GiB/s**
 
 Multi-threaded file decoding test on tmpfs.
 
-`cargo bench --bench multi_files --no-default-features -F bin`
+`cargo bench --bench multi_files --no-default-features -F bin -j 1`
 
 - 900KB files: **26.370 GiB/s**
 - 10MB files: **33.432 GiB/s**
