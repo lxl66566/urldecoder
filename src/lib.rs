@@ -7,7 +7,6 @@ use std::{
     fs,
     io::{self, BufWriter, Write},
     path::Path,
-    sync::LazyLock,
 };
 
 pub use error::*;
@@ -118,8 +117,6 @@ fn trim_url_end(slice: &[u8]) -> (&[u8], &[u8]) {
     unsafe { (slice.get_unchecked(..end), slice.get_unchecked(end..)) }
 }
 
-static HTTP_FINDER: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(b"http"));
-
 // ============================================================================
 // Core Logic
 // ============================================================================
@@ -183,9 +180,10 @@ fn decode_in_place_inner<const ESCAPE_SPACE: bool>(
     let mut r = 0;
     let mut w = 0;
     let len = data.len();
+    let finder = Finder::new(b"http");
 
     while r < len {
-        if let Some(match_idx) = HTTP_FINDER.find(&data[r..]) {
+        if let Some(match_idx) = finder.find(&data[r..]) {
             let start = r + match_idx;
 
             let is_http = data[start..].starts_with(b"http://");
@@ -437,9 +435,10 @@ pub fn decode_slice_to_writer<W: Write>(
     let mut pos = 0;
     let len = input.len();
     let mut changed = false;
+    let finder = Finder::new(b"http");
 
     while pos < len {
-        if let Some(match_idx) = HTTP_FINDER.find(&input[pos..]) {
+        if let Some(match_idx) = finder.find(&input[pos..]) {
             let start = pos + match_idx;
 
             let is_http = input[start..].starts_with(b"http://");
