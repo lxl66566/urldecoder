@@ -1,45 +1,40 @@
 #![no_main]
-use std::sync::OnceLock;
+use std::{borrow::Cow, sync::LazyLock};
 
 use libfuzzer_sys::fuzz_target;
+use memchr::memmem::Finder;
 use regex::Regex;
-use urldecoder::decode_str;
+use urldecoder::{decode_in_place, decode_str};
 use urlencoding::decode;
 
-static REGEX: OnceLock<Regex> = OnceLock::new();
+static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"https?://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]"#).unwrap()
+});
+static HTTP_FINDER: LazyLock<Finder<'static>> = LazyLock::new(|| Finder::new(b"http"));
 
-/// 这是一个 "Strict" 版本的参考实现
-/// 它不会吞掉 decode 的错误，而是将错误向上传递
-pub fn decode_url_strict(code: &str, escape_space: bool) -> Result<(String, bool), ()> {
-    if !code.contains("http") {
-        return Ok((code.to_string(), false));
+#[allow(clippy::result_unit_err)]
+pub fn decode_url_strict(code: &str, escape_space: bool) -> Result<(Cow<'_, str>, bool), ()> {
+    if HTTP_FINDER.find(b"http").is_none() {
+        return Ok((Cow::Borrowed(code), false));
     }
-
-    let regex = REGEX.get_or_init(|| {
-        Regex::new(r#"https?://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]"#).unwrap()
-    });
 
     let mut replaced = false;
     let mut decode_error = false;
 
-    // 使用 replace_all，但在闭包中捕获 decode_error 状态
-    let result_cow = regex.replace_all(code, |caps: &regex::Captures| {
-        // 如果之前已经出错了，直接返回原串，不做多余处理
+    let result_cow = REGEX.replace_all(code, |caps: &regex::Captures| {
         if decode_error {
-            return caps[0].to_string();
+            return Cow::Borrowed("");
         }
 
         let url = &caps[0];
         if url.rfind('%').is_none() {
-            return url.to_owned();
+            return Cow::Owned(url.to_owned());
         }
 
         // 核心改动：不再 unwrap_or，而是处理 Result
         match decode(url) {
             Ok(decoded_cow) => {
                 let result = if escape_space {
-                    // 如果需要转义空格，这里处理。
-                    // 注意：urlencoding::decode 返回的是 Cow，replace 返回 String
                     decoded_cow.replace(' ', "%20")
                 } else {
                     decoded_cow.into_owned()
@@ -48,12 +43,11 @@ pub fn decode_url_strict(code: &str, escape_space: bool) -> Result<(String, bool
                 if url != result {
                     replaced = true;
                 }
-                result
+                Cow::Owned(result)
             }
             Err(_) => {
-                // 如果标准库解码失败（例如无效的 UTF-8 序列），标记错误
                 decode_error = true;
-                url.to_owned() // 返回原串以满足闭包类型，但外部会检查 decode_error
+                Cow::Borrowed("")
             }
         }
     });
@@ -61,15 +55,14 @@ pub fn decode_url_strict(code: &str, escape_space: bool) -> Result<(String, bool
     if decode_error {
         Err(())
     } else {
-        Ok((result_cow.into_owned(), replaced))
+        Ok((result_cow, replaced))
     }
 }
 
-fn test_scenario(input_str: &str, escape_space: bool) {
+fn test_basic(input_str: &str, ref_res: Result<&(Cow<str>, bool), &()>, escape_space: bool) {
     let my_res = decode_str(input_str, escape_space);
-    let ref_res = decode_url_strict(input_str, escape_space);
 
-    match (ref_res, my_res) {
+    match (ref_res, my_res.as_ref()) {
         // Case 1: 参考实现认为这是错误的编码，但你的实现成功解码了。
         // 根据要求：如果 decode(url) 返回 err，decode_str 也需要返回 err。
         (Err(_), Ok(res)) => {
@@ -88,16 +81,18 @@ fn test_scenario(input_str: &str, escape_space: bool) {
         }
 
         // Case 3: 两者都报错，符合预期。
-        (Err(_), Err(_)) => {
-            return;
-        }
+        (Err(_), Err(_)) => {}
 
         // Case 4: 两者都成功，对比结果。
         (Ok((ref_out, ref_changed)), Ok((my_out, my_changed))) => {
             assert_eq!(
-                my_out, ref_out,
+                my_out,
+                ref_out.as_ref(),
                 "\n[Output Mismatch escape_space={}]\nInput: {:?}\nMy Output: {:?}\nRef Output: {:?}",
-                escape_space, input_str, my_out, ref_out
+                escape_space,
+                input_str,
+                my_out,
+                ref_out
             );
             assert_eq!(
                 my_changed, ref_changed,
@@ -108,14 +103,38 @@ fn test_scenario(input_str: &str, escape_space: bool) {
     }
 }
 
+fn test_in_place(mut input: Vec<u8>, ref_res: (Cow<str>, bool), escape_space: bool) {
+    let res = decode_in_place(&mut input, escape_space);
+    let (my_res, my_changed) = (&input[0..res], res < input.len());
+
+    assert_eq!(
+        my_res,
+        ref_res.0.as_bytes(),
+        "\n[Output Mismatch escape_space={}]\nInput: {:?}\nMy Output: {:?}\nRef Output: {:?}",
+        escape_space,
+        input,
+        my_res,
+        ref_res.0
+    );
+    assert_eq!(
+        my_changed, ref_res.1,
+        "\n[Changed Flag Mismatch escape_space={}]\nInput: {:?}",
+        escape_space, input
+    );
+}
+
 // =================================================================
 // 2. Fuzz Target
 // =================================================================
 fuzz_target!(|data: &[u8]| {
     if let Ok(input_str) = std::str::from_utf8(data) {
-        // 测试 escape_space = true
-        test_scenario(input_str, true);
-        // 测试 escape_space = false
-        test_scenario(input_str, false);
+        let expected = decode_url_strict(input_str, false);
+        let expected_escape_space = decode_url_strict(input_str, true);
+        test_basic(input_str, expected.as_ref(), false);
+        test_basic(input_str, expected_escape_space.as_ref(), true);
+        if let Ok(expected) = expected {
+            test_in_place(data.to_vec(), expected, false);
+            test_in_place(data.to_vec(), expected_escape_space.unwrap(), true);
+        }
     }
 });
