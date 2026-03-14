@@ -74,8 +74,7 @@ fn bench_decode_throughput(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(total_bytes));
 
     // 4 MB
-    // unsafe: 24.784 GiB/s
-    // safe: 24.447 GiB/s
+    // unsafe: 27.133 GiB/s
     group.bench_function("rayon_decode_dry_run", |b| {
         b.iter(|| {
             let escape_space = false;
@@ -102,8 +101,8 @@ fn bench_decode_throughput(c: &mut Criterion) {
     });
 
     // 4 MB
-    // unsafe: 20.890 GiB/s
-    // safe: 11.308 GiB/s
+    // unsafe: 21.860 GiB/s
+    // safe: 11.954 GiB/s
     group.bench_function("rayon_decode", |b| {
         b.iter(|| {
             let escape_space = false;

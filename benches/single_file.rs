@@ -64,8 +64,7 @@ fn bench_file_decode_dry_run(c: &mut Criterion) {
         " (unsafe)"
     };
 
-    // unsafe: 3.6502 GiB/s
-    // safe: 3.6523 GiB/s
+    // unsafe: 3.6112 GiB/s
     let mut small_group = c.benchmark_group("decode_file_small_dry_run");
     small_group.throughput(Throughput::Bytes(SMALL_FILE_SIZE));
     small_group.bench_function("decode_small_dry_run".to_string() + safe_suffix, |b| {
@@ -90,8 +89,7 @@ fn bench_file_decode_dry_run(c: &mut Criterion) {
     });
     small_group.finish();
 
-    // unsafe: 6.5856 GiB/s
-    // safe: 6.5743 GiB/s
+    // unsafe: 6.6144 GiB/s
     let mut large_group = c.benchmark_group("decode_file_large_dry_run");
     large_group.throughput(Throughput::Bytes(LARGE_FILE_SIZE));
     large_group.bench_function("decode_large_dry_run".to_string() + safe_suffix, |b| {
@@ -132,8 +130,8 @@ fn bench_file_decode(c: &mut Criterion) {
         " (unsafe)"
     };
 
-    // unsafe: 1.4765 GiB/s
-    // safe: 1.1970 GiB/s
+    // unsafe: 1.4933 GiB/s
+    // safe: 1.1948 GiB/s
     let mut small_group = c.benchmark_group("decode_file_small");
     small_group.throughput(Throughput::Bytes(SMALL_FILE_SIZE));
     small_group.bench_function("decode_small".to_string() + safe_suffix, |b| {
@@ -166,8 +164,8 @@ fn bench_file_decode(c: &mut Criterion) {
     });
     small_group.finish();
 
-    // unsafe: 5.6262 GiB/s
-    // safe: 2.0759 GiB/s
+    // unsafe: 5.7140 GiB/s
+    // safe: 2.1883 GiB/s
     let mut large_group = c.benchmark_group("decode_file_large");
     large_group.throughput(Throughput::Bytes(LARGE_FILE_SIZE));
     large_group.bench_function("decode_large".to_string() + safe_suffix, |b| {

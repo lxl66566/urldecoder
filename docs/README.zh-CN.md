@@ -51,9 +51,9 @@ urldecoder -e src/.vuepress/.cache -e src/.vuepress/.temp -e src/.vuepress/dist 
 
 features:
 
-- `bin`: 用于编译命令行，rayon 并行解码 + glob 文件匹配
-- `verbose-log`: 启用解码过程中的提示信息输出，buffer 拷贝次数会增多
-- `safe` (default): 原子化写入文件内容，保证文件完整性
+- `bin`: 用于编译 cli 程序，启用 rayon 并行解码 + glob 文件匹配。
+- `verbose-log`: 启用解码过程中的提示信息输出，buffer 拷贝次数会增多。
+- `safe` (default): 原子化写入文件内容，保证文件完整性；对纯内存的解码无影响。
 
 ## benchmark
 
@@ -66,14 +66,14 @@ features:
 |---|---|---|
 |单线程（std::io::sink）|9.4580 GiB/s|-|
 |单线程（In place）|7.8869 GiB/s|-|
-|32KB 单文件解码（dry run, read only）|3.6502 GiB/s|-|
-|32KB 单文件解码（RW, tmpfs）|1.4765 GiB/s|1.1970 GiB/s|
-|10MB 单文件解码（dry run, read only）|6.5856 GiB/s|-|
-|10MB 单文件解码（RW, tmpfs）|5.6262 GiB/s|2.0759 GiB/s|
-|32KB 文件并行解码（dry run, read only）|22.966 GiB/s|-|
-|32KB 文件并行解码（RW, tmpfs）|26.184 GiB/s|24.524 GiB/s|
-|4MB 文件并行解码（dry run, read only）|24.784 GiB/s|-|
-|4MB 文件并行解码（RW, tmpfs）|20.890 GiB/s|11.308 GiB/s|
+|32KB 单文件解码（dry run, read only）|3.6112 GiB/s|-|
+|32KB 单文件解码（RW, tmpfs）|1.4933 GiB/s|1.1948 GiB/s|
+|10MB 单文件解码（dry run, read only）|6.6144 GiB/s|-|
+|10MB 单文件解码（RW, tmpfs）|5.7140 GiB/s|2.1883 GiB/s|
+|32KB 文件并行解码（dry run, read only）|25.460 GiB/s|-|
+|32KB 文件并行解码（RW, tmpfs）|28.930 GiB/s|25.808 GiB/s|
+|4MB 文件并行解码（dry run, read only）|27.133 GiB/s|-|
+|4MB 文件并行解码（RW, tmpfs）|21.860 GiB/s|11.954 GiB/s|
 
 ```sh
 cargo bench --bench single_thread --no-default-features

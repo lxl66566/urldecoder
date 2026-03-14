@@ -37,7 +37,7 @@ urldecoder *.md -e my.md    # Decode all `.md` files in the current directory, e
 urldecoder **/*             # Decode all files in the current directory and its subdirectories
 ```
 
-By default, the `node_modules` folder is excluded.
+- By default, the `node_modules` folder is excluded.
 
 My typical usage:
 
@@ -53,7 +53,7 @@ Features:
 
 - `bin`: Used for compiling the CLI; enables Rayon parallel decoding + glob file matching.
 - `verbose-log`: Enables verbose logging during decoding; may increase buffer copy operations.
-- `safe` (default): Atomically writes file contents to ensure file integrity.
+- `safe` (default): Atomic write file contents to ensure integrity. Has no effect on in-memory decoding.
 
 ## Benchmark
 
@@ -66,14 +66,14 @@ String/text content: 90% ordinary ASCII text + 10% URL-encoded strings.
 |-----------------------------------------------|----------|----------|
 | Single-threaded (std::io::sink)                | 9.4580 GiB/s | -        |
 | Single-threaded (In place)                     | 7.8869 GiB/s | -        |
-| Single-file 32KB decode (dry run, read only)   | 3.6502 GiB/s | -        |
-| Single-file 32KB decode (RW, tmpfs)            | 1.4765 GiB/s | 1.1970 GiB/s |
-| Single-file 10MB decode (dry run, read only)   | 6.5856 GiB/s | -        |
-| Single-file 10MB decode (RW, tmpfs)            | 5.6262 GiB/s | 2.0759 GiB/s |
-| Parallel 32KB files decode (dry run, read only)| 22.966 GiB/s | -        |
-| Parallel 32KB files decode (RW, tmpfs)         | 26.184 GiB/s | 24.524 GiB/s |
-| Parallel 4MB files decode (dry run, read only) | 24.784 GiB/s | -        |
-| Parallel 4MB files decode (RW, tmpfs)          | 20.890 GiB/s | 11.308 GiB/s |
+| Single-file 32KB decode (dry run, read only)   | 3.6112 GiB/s | -        |
+| Single-file 32KB decode (RW, tmpfs)            | 1.4933 GiB/s | 1.1948 GiB/s |
+| Single-file 10MB decode (dry run, read only)   | 6.6144 GiB/s | -        |
+| Single-file 10MB decode (RW, tmpfs)            | 5.7140 GiB/s | 2.1883 GiB/s |
+| Parallel 32KB files decode (dry run, read only)| 25.460 GiB/s | -        |
+| Parallel 32KB files decode (RW, tmpfs)         | 28.930 GiB/s | 25.808 GiB/s |
+| Parallel 4MB files decode (dry run, read only) | 27.133 GiB/s | -        |
+| Parallel 4MB files decode (RW, tmpfs)          | 21.860 GiB/s | 11.954 GiB/s |
 
 ```sh
 cargo bench --bench single_thread --no-default-features
