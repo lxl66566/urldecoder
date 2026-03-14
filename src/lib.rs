@@ -399,6 +399,9 @@ fn decode_file_in_place(
                 .context(ReadInputSnafu)?
         };
 
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Sequential);
+
         let new_len = decode!(decode_in_place(&mut mmap, escape_space), verbose);
         let is_changed = new_len < file_len as usize;
 
@@ -690,6 +693,9 @@ pub fn decode_file(
                 .map(&file)
                 .context(ReadInputSnafu)?
         };
+
+        #[cfg(unix)]
+        mmap.advise(memmap2::Advice::Sequential);
 
         if dry_run {
             let mut sink = io::sink();
