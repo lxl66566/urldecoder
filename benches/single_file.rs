@@ -1,5 +1,5 @@
 #[cfg(feature = "verbose-log")]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::{hint::black_box, io::Write};
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};

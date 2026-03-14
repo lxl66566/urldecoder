@@ -1,9 +1,9 @@
 use std::{hint::black_box, io};
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use urldecoder::decode_slice_to_writer;
 #[cfg(feature = "verbose-log")]
-use urldecoder::log::NoOpLogger;
+use urldecoder::log::{DecodeLogger, NoOpLogger, VerboseLogger};
+use urldecoder::{decode_in_place, decode_slice_to_writer};
 
 const STREAM_SIZE: u64 = 128 * 1024 * 1024;
 
@@ -79,12 +79,10 @@ fn bench_decode(c: &mut Criterion) {
                 #[cfg(feature = "verbose-log")]
                 {
                     let mut logger = VerboseLogger::new();
-                    decode_in_place(black_box(&mut full_data), black_box(true), &mut logger)
+                    decode_in_place(black_box(full_data), black_box(true), &mut logger)
                 }
                 #[cfg(not(feature = "verbose-log"))]
                 {
-                    use urldecoder::decode_in_place;
-
                     decode_in_place(black_box(full_data), black_box(true))
                 }
             },
