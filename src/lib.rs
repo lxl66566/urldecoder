@@ -630,12 +630,9 @@ pub fn decode_str(
     )
     .context(WriteOutputSnafu)?;
 
-    Ok((
-        simdutf8::basic::from_utf8(&buf)
-            .context(InvalidUtf8Snafu)?
-            .to_owned(),
-        changed,
-    ))
+    simdutf8::basic::from_utf8(&buf).context(InvalidUtf8Snafu)?;
+    // SAFETY: `buf` was just validated as UTF-8 above.
+    Ok((unsafe { String::from_utf8_unchecked(buf) }, changed))
 }
 
 /// Decode file and overwrite.
