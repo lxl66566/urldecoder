@@ -207,13 +207,7 @@ fn decode_in_place_inner<const ESCAPE_SPACE: bool>(
                     end += 1;
                 }
 
-                let mut valid_end = end;
-                while valid_end > start {
-                    if is_url_end_char(unsafe { *data.get_unchecked(valid_end - 1) }) {
-                        break;
-                    }
-                    valid_end -= 1;
-                }
+                let valid_end = start + trim_url_end(&data[start..end]).0.len();
 
                 // Decode URL in-place
                 w = decode_url_in_place_indices::<ESCAPE_SPACE>(
@@ -384,7 +378,15 @@ fn decode_file_in_place(
         let is_changed = new_len < file_len as usize;
 
         if is_changed {
-            fs::write(path, &buf[..new_len]).context(WriteOutputSnafu)?;
+            let file = OpenOptions::new()
+                .write(true)
+                .open(path)
+                .context(OpenInputSnafu { path })?;
+            (&file)
+                .write_all(&buf[..new_len])
+                .context(WriteBackSnafu { path })?;
+            file.set_len(new_len as u64)
+                .context(WriteBackSnafu { path })?;
         }
         is_changed
     } else {
