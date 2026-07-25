@@ -39,7 +39,21 @@ struct Cli {
 
 #[inline]
 fn in_exclude(exclude: &[PathBuf], path: &Path) -> bool {
-    exclude.iter().any(|p| path.starts_with(p) || path == p)
+    exclude.iter().any(|p| {
+        if path.starts_with(p) {
+            return true;
+        }
+        // A relative exclude entry also matches when it appears as a
+        // contiguous component sequence anywhere inside the path, so that
+        // e.g. "node_modules" excludes nested directories and works even
+        // when the glob pattern yields absolute paths.
+        if p.is_relative() {
+            let pat: Vec<_> = p.components().collect();
+            let comps: Vec<_> = path.components().collect();
+            return !pat.is_empty() && comps.windows(pat.len()).any(|w| w == pat.as_slice());
+        }
+        false
+    })
 }
 
 fn main() -> Result<(), snafu::Whatever> {
