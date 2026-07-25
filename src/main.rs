@@ -222,4 +222,35 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(t3).unwrap(), test_str);
     }
+
+    #[test]
+    fn duplicate_pattern_dedup_test() {
+        let test_str = "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94";
+        let temp = TempDir::new().unwrap();
+        let t1 = temp.path().join("test1.txt");
+        fs::write(&t1, test_str).unwrap();
+
+        let pattern = t1.to_string_lossy().to_string();
+        process_directory(
+            vec![pattern.clone(), pattern],
+            &[],
+            false,
+            false,
+            #[cfg(feature = "verbose-log")]
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&t1).unwrap(),
+            decode_str(
+                test_str,
+                false,
+                #[cfg(feature = "verbose-log")]
+                false
+            )
+            .unwrap()
+            .0
+        );
+    }
 }

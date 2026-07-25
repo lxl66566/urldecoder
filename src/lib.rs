@@ -881,4 +881,78 @@ mod tests {
             "xxxxhttps://www.baidu.com/s?ie=UTF-8&wd=天气xxxx"
         );
     }
+
+    #[test]
+    fn test_decode_file_dry_run() {
+        let temp = NamedTempFile::new().unwrap();
+        let t1 = temp.into_temp_path();
+        let test_str = "https://www.baidu.com/s?ie=UTF-8&wd=%E5%A4%A9%E6%B0%94";
+        fs::write(&t1, test_str).unwrap();
+
+        decode_file(
+            &t1,
+            false,
+            true,
+            #[cfg(feature = "verbose-log")]
+            false,
+            #[cfg(feature = "verbose-log")]
+            &AtomicUsize::new(0),
+            #[cfg(feature = "verbose-log")]
+            &AtomicUsize::new(0),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(t1).unwrap(), test_str);
+    }
+
+    #[test]
+    fn test_decode_file_large() {
+        let temp = NamedTempFile::new().unwrap();
+        let t1 = temp.into_temp_path();
+        let chunk = "prefix text https://a.com/%E5%A4%A9%E6%B0%94 suffix\n";
+        let content = chunk.repeat(12000);
+        assert!(content.len() as u64 > SMALL_FILE_THRESHOLD);
+        fs::write(&t1, &content).unwrap();
+
+        decode_file(
+            &t1,
+            false,
+            false,
+            #[cfg(feature = "verbose-log")]
+            false,
+            #[cfg(feature = "verbose-log")]
+            &AtomicUsize::new(0),
+            #[cfg(feature = "verbose-log")]
+            &AtomicUsize::new(0),
+        )
+        .unwrap();
+
+        let expected = "prefix text https://a.com/天气 suffix\n".repeat(12000);
+        assert_eq!(fs::read_to_string(t1).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_decode_file_large_dry_run() {
+        let temp = NamedTempFile::new().unwrap();
+        let t1 = temp.into_temp_path();
+        let chunk = "prefix text https://a.com/%E5%A4%A9%E6%B0%94 suffix\n";
+        let content = chunk.repeat(12000);
+        assert!(content.len() as u64 > SMALL_FILE_THRESHOLD);
+        fs::write(&t1, &content).unwrap();
+
+        decode_file(
+            &t1,
+            false,
+            true,
+            #[cfg(feature = "verbose-log")]
+            false,
+            #[cfg(feature = "verbose-log")]
+            &AtomicUsize::new(0),
+            #[cfg(feature = "verbose-log")]
+            &AtomicUsize::new(0),
+        )
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(t1).unwrap(), content);
+    }
 }
