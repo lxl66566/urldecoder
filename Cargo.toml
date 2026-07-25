@@ -36,7 +36,7 @@ criterion = "0.8.1"
 bin = ["rayon", "glob", "clap"]
 # verbose log (output diff)
 verbose-log = []
-# if decoded url is not valid utf-8, do not decode
+# write via temp file + atomic rename instead of in-place mmap mutation
 safe = []
 # default features
 default = ["safe"]
