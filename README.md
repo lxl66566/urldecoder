@@ -64,16 +64,14 @@ String/text content: 90% ordinary ASCII text + 10% URL-encoded strings.
 <!-- prettier-ignore -->
 | Use Case                                      | unsafe   | safe     |
 |-----------------------------------------------|----------|----------|
-| Single-threaded (std::io::sink)                | 9.4580 GiB/s | -        |
-| Single-threaded (In place)                     | 7.8869 GiB/s | -        |
-| Single-file 32KB decode (dry run, read only)   | 3.6112 GiB/s | -        |
-| Single-file 32KB decode (RW, tmpfs)            | 1.4933 GiB/s | 1.1948 GiB/s |
-| Single-file 10MB decode (dry run, read only)   | 6.6144 GiB/s | -        |
-| Single-file 10MB decode (RW, tmpfs)            | 5.7140 GiB/s | 2.1883 GiB/s |
-| Parallel 32KB files decode (dry run, read only)| 25.460 GiB/s | -        |
-| Parallel 32KB files decode (RW, tmpfs)         | 28.930 GiB/s | 25.808 GiB/s |
-| Parallel 4MB files decode (dry run, read only) | 27.133 GiB/s | -        |
-| Parallel 4MB files decode (RW, tmpfs)          | 21.860 GiB/s | 11.954 GiB/s |
+| Single-threaded (std::io::sink)                | 8.777 GiB/s | -        |
+| Single-threaded (In place)                     | 7.078 GiB/s | -        |
+| Single-file 32KB decode (dry run, read only)   | 3.380 GiB/s | -        |
+| Single-file 32KB decode (RW, tmpfs)            | 2.149 GiB/s | 1.158 GiB/s |
+| Single-file 10MB decode (dry run, read only)   | 6.341 GiB/s | -        |
+| Single-file 10MB decode (RW, tmpfs)            | 5.208 GiB/s | 2.048 GiB/s |
+| Parallel 32KB files decode (dry run, read only)| 22.47 GiB/s | -        |
+| Parallel 32KB files decode (RW, tmpfs)         | 26.18 GiB/s | 25.69 GiB/s |
 
 ```sh
 cargo bench --bench single_thread --no-default-features
