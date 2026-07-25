@@ -77,6 +77,9 @@ fn process_directory(
         }
     }
 
+    paths.sort_unstable();
+    paths.dedup();
+
     if paths.is_empty() {
         println!("No files found.");
         return Ok(());
