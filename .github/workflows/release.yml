@@ -1,8 +1,11 @@
 name: rust release action
+
 on:
   push:
     tags:
       - "v*"
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -11,7 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: release
         uses: lxl66566/rust-simple-release@main
@@ -20,9 +23,9 @@ jobs:
             aarch64-unknown-linux-gnu
             aarch64-unknown-linux-musl
             x86_64-pc-windows-msvc
+            aarch64-pc-windows-msvc
             x86_64-unknown-linux-musl
             x86_64-unknown-linux-gnu
             aarch64-apple-darwin
             x86_64-apple-darwin
-          token: ${{ secrets.GH_TOKEN }}
           features: safe, bin, verbose-log
