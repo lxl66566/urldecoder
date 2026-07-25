@@ -20,6 +20,7 @@ use crate::log::{DecodeLogger, NoOpLogger};
 
 const SMALL_FILE_THRESHOLD: u64 = 256 * 1024;
 const IO_BUF_SIZE: usize = 64 * 1024;
+const DECODED_BUF_SIZE: usize = 128;
 const URL_CHAR_BITMAP: [u32; 8] = gen_url_bitmap(b"-+&@#/%?=~_|!:,.;");
 const URL_END_CHAR_BITMAP: [u32; 8] = gen_url_bitmap(b"-+&@#/%=~_|");
 const HEX_MAP: [u8; 256] = gen_hex_map();
@@ -549,6 +550,8 @@ fn decode_inner<const ESCAPE_SPACE: bool, W: Write>(
     let len = url.len();
     let mut changed = false;
     let mut literal_start = i; // for batch write
+    let mut decoded_buf = [0u8; DECODED_BUF_SIZE];
+    let mut decoded_len = 0;
 
     while i < len {
         if url[i] == b'%' && i + 2 < len {
@@ -562,11 +565,20 @@ fn decode_inner<const ESCAPE_SPACE: bool, W: Write>(
 
                 changed = true;
                 if i > literal_start {
+                    if decoded_len > 0 {
+                        writer.write_all(&decoded_buf[..decoded_len])?;
+                        decoded_len = 0;
+                    }
                     writer.write_all(&url[literal_start..i])?;
                     logger.log_orig_slice(&url[literal_start..i]);
                     logger.log_res_slice(&url[literal_start..i]);
                 }
-                writer.write_all(&[decoded])?;
+                decoded_buf[decoded_len] = decoded;
+                decoded_len += 1;
+                if decoded_len == DECODED_BUF_SIZE {
+                    writer.write_all(&decoded_buf)?;
+                    decoded_len = 0;
+                }
                 logger.log_orig(b'%');
                 logger.log_orig(h1);
                 logger.log_orig(h2);
@@ -588,6 +600,9 @@ fn decode_inner<const ESCAPE_SPACE: bool, W: Write>(
                 None => i = len,
             }
         }
+    }
+    if decoded_len > 0 {
+        writer.write_all(&decoded_buf[..decoded_len])?;
     }
     if literal_start < len {
         writer.write_all(&url[literal_start..len])?;
