@@ -680,6 +680,7 @@ pub fn decode_file(
 
             temp_file.write_all(&buf).context(WriteOutputSnafu)?;
             temp_file.flush().context(WriteOutputSnafu)?;
+            temp_file.as_file().sync_all().context(WriteOutputSnafu)?;
 
             // Set permissions
             let _ = temp_file.as_file().set_permissions(metadata.permissions());
@@ -724,6 +725,7 @@ pub fn decode_file(
             drop(file);
 
             if changed {
+                temp_file.as_file().sync_all().context(WriteOutputSnafu)?;
                 // Set permissions AFTER writing to avoid PermissionDenied if original is
                 // read-only
                 let _ = temp_file.as_file().set_permissions(metadata.permissions());
